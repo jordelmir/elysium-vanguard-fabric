@@ -1,99 +1,98 @@
 import SwiftUI
+import VanguardUI
 import VanguardDomain
 
 struct TerminalView: View {
     let sessionID: String
     @StateObject private var terminalState = TerminalViewState()
     @EnvironmentObject private var consoleState: ConsoleAppState
+    @State private var cursorBlink = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(EV.Colors.green.opacity(0.2))
+            Divider().background(DS.Colors.success.opacity(0.15))
             outputArea
-            Divider().overlay(EV.Colors.green.opacity(0.2))
+            Divider().background(DS.Colors.success.opacity(0.15))
             inputBar
         }
-        .background(EV.Colors.bg)
         .task { await terminalState.openTerminal(consoleState: consoleState) }
         .onDisappear { Task { await terminalState.closeTerminal(consoleState: consoleState) } }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(EV.Colors.green.opacity(0.1))
-                    .frame(width: 28, height: 28)
-                Image(systemName: "terminal")
-                    .font(.system(size: 13))
-                    .foregroundColor(EV.Colors.green)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text("TERMINAL")
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
-                    .foregroundColor(EV.Colors.green)
-                    .tracking(2)
-                Text("Remote shell session")
-                    .font(.caption2)
-                    .foregroundColor(EV.Colors.textTertiary)
+        HStack(spacing: DS.Spacing.md) {
+            HStack(spacing: DS.Spacing.sm) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous)
+                        .fill(DS.Colors.success.opacity(0.1))
+                        .frame(width: 26, height: 26)
+                    Image(systemName: "terminal")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(DS.Colors.success)
+                }
+                VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+                    Text("TERMINAL")
+                        .font(DS.Typography.micro)
+                        .foregroundColor(DS.Colors.success)
+                        .tracking(2)
+                    Text("Remote shell")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textQuaternary)
+                }
             }
             Spacer()
-            Button(action: { terminalState.toggleFullscreen() }) {
-                Image(systemName: terminalState.isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 12))
-                    .foregroundColor(EV.Colors.textSecondary)
-            }
-            .buttonStyle(.borderless)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(EV.Colors.bg)
+        .padding(.horizontal, DS.Spacing.lg)
+        .padding(.vertical, DS.Spacing.md)
     }
 
     private var outputArea: some View {
         ScrollViewReader { proxy in
             ScrollView([.horizontal, .vertical]) {
                 Text(terminalState.output)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundColor(EV.Colors.green)
+                    .font(DS.Typography.mono)
+                    .foregroundColor(DS.Colors.success)
                     .textSelection(.enabled)
-                    .padding(12)
+                    .padding(DS.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .id("output")
             }
-            .background(Color.black.opacity(0.6))
+            .background(Color.black.opacity(0.5))
             .onChange(of: terminalState.output) { _ in
-                withAnimation { proxy.scrollTo("output", anchor: .bottom) }
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("output", anchor: .bottom) }
             }
         }
     }
 
     private var inputBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 4) {
-                Text("❯")
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundColor(EV.Colors.green)
-                    .shadow(color: EV.Colors.green.opacity(0.5), radius: 4)
-            }
+        HStack(spacing: DS.Spacing.sm) {
+            Text("❯")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundColor(DS.Colors.success)
+                .shadow(color: DS.Colors.success.opacity(0.5), radius: 4)
+                .opacity(cursorBlink ? 1 : 0.4)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 0.8).repeatForever()) { cursorBlink = true }
+                }
+
             TextField("Type command...", text: $terminalState.input)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(EV.Colors.green)
+                .font(DS.Typography.mono)
+                .foregroundColor(DS.Colors.success)
                 .onSubmit { terminalState.sendInput() }
 
             Button(action: { terminalState.sendInput() }) {
                 Image(systemName: "return")
-                    .font(.system(size: 11))
-                    .foregroundColor(terminalState.input.isEmpty ? EV.Colors.textTertiary : EV.Colors.green)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(terminalState.input.isEmpty ? DS.Colors.textQuaternary : DS.Colors.success)
             }
             .buttonStyle(.borderless)
             .disabled(terminalState.input.isEmpty)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(EV.Colors.surface.opacity(0.4))
+        .padding(.horizontal, DS.Spacing.lg)
+        .padding(.vertical, DS.Spacing.md)
+        .glass(style: .ultraThin, cornerRadius: 0)
     }
 }
 

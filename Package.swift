@@ -27,6 +27,7 @@ let package = Package(
         .library(name: "VanguardSession", targets: ["VanguardSession"]),
         .library(name: "VanguardRender", targets: ["VanguardRender"]),
         .library(name: "VanguardTestSupport", targets: ["VanguardTestSupport"]),
+        .library(name: "VanguardUI", targets: ["VanguardUI"]),
     ],
     targets: [
         .target(
@@ -142,6 +143,10 @@ let package = Package(
             path: "Packages/VanguardRender/Sources/VanguardRender"
         ),
         .target(
+            name: "VanguardUI",
+            path: "Packages/VanguardUI/Sources/VanguardUI"
+        ),
+        .target(
             name: "VanguardTestSupport",
             dependencies: [
                 "VanguardDomain",
@@ -246,6 +251,7 @@ let package = Package(
                 "VanguardVideo",
                 "VanguardInput",
                 "VanguardTerminal",
+                "VanguardUI",
             ],
             path: "Apps/VanguardNodeMac/Sources/VanguardNodeMac",
             linkerSettings: [
@@ -269,6 +275,7 @@ let package = Package(
                 "VanguardInput",
                 "VanguardTerminal",
                 "VanguardRender",
+                "VanguardUI",
             ],
             path: "Apps/VanguardConsoleMac/Sources/VanguardConsoleMac",
             linkerSettings: [

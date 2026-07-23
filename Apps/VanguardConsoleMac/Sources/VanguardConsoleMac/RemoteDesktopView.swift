@@ -1,4 +1,5 @@
 import SwiftUI
+import VanguardUI
 import AppKit
 import VanguardDomain
 import VanguardProtocol
@@ -13,9 +14,9 @@ struct RemoteDesktopView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider().overlay(EV.Colors.cyan.opacity(0.15))
+            Divider().background(Color.white.opacity(0.04))
             videoArea
-            Divider().overlay(EV.Colors.cyan.opacity(0.15))
+            Divider().background(Color.white.opacity(0.04))
             statusBar
         }
         .task { await renderer.startReceiving(consoleState: consoleState) }
@@ -23,41 +24,38 @@ struct RemoteDesktopView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
+        HStack(spacing: DS.Spacing.md) {
+            HStack(spacing: DS.Spacing.sm) {
                 Image(systemName: "display")
-                    .foregroundColor(EV.Colors.cyan)
+                    .foregroundColor(DS.Colors.accent)
                 Text(nodeName)
-                    .font(.system(.headline, design: .rounded))
-                    .foregroundColor(EV.Colors.textPrimary)
+                    .font(DS.Typography.headline)
+                    .foregroundColor(DS.Colors.textPrimary)
             }
             Spacer()
             if renderer.showFPS {
-                HStack(spacing: 6) {
+                HStack(spacing: DS.Spacing.xs) {
                     Text("\(renderer.fps)")
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundColor(EV.Colors.green)
+                        .font(DS.Typography.monoBold)
+                        .foregroundColor(DS.Colors.success)
                     Text("FPS")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(EV.Colors.textTertiary)
-                    Text("·")
-                        .foregroundColor(EV.Colors.textTertiary)
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textQuaternary)
+                    Text("·").foregroundColor(DS.Colors.textQuaternary)
                     Text("\(renderer.latency, specifier: "%.0f")")
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundColor(EV.Colors.cyan)
+                        .font(DS.Typography.monoBold)
+                        .foregroundColor(DS.Colors.accent)
                     Text("ms")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(EV.Colors.textTertiary)
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textQuaternary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(EV.Colors.surface.opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.xs)
+                .glass(style: .ultraThin, cornerRadius: DS.Radius.sm)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(EV.Colors.bg)
+        .padding(.horizontal, DS.Spacing.lg)
+        .padding(.vertical, DS.Spacing.md)
     }
 
     private var videoArea: some View {
@@ -69,18 +67,18 @@ struct RemoteDesktopView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: DS.Spacing.lg) {
                     ZStack {
                         Circle()
-                            .fill(EV.Colors.cyan.opacity(0.06))
-                            .frame(width: 80, height: 80)
+                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                            .frame(width: 72, height: 72)
                         Image(systemName: "display.trianglebadge.exclamationmark")
-                            .font(.system(size: 32))
-                            .foregroundColor(EV.Colors.textTertiary)
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundColor(DS.Colors.textQuaternary)
                     }
                     Text("WAITING FOR STREAM")
-                        .font(.system(size: 10, weight: .black, design: .monospaced))
-                        .foregroundColor(EV.Colors.textTertiary)
+                        .font(DS.Typography.micro)
+                        .foregroundColor(DS.Colors.textQuaternary)
                         .tracking(3)
                 }
             }
@@ -92,10 +90,10 @@ struct RemoteDesktopView: View {
                     path.move(to: CGPoint(x: renderer.cursorX, y: renderer.cursorY - 12))
                     path.addLine(to: CGPoint(x: renderer.cursorX, y: renderer.cursorY + 12))
                 }
-                .stroke(EV.Colors.cyan.opacity(0.6), lineWidth: 1)
-                .shadow(color: EV.Colors.cyan.opacity(0.4), radius: 4)
+                .stroke(DS.Colors.accent.opacity(0.5), lineWidth: 1)
+                .shadow(color: DS.Colors.accent.opacity(0.3), radius: 4)
                 Circle()
-                    .stroke(EV.Colors.cyan.opacity(0.3), lineWidth: 1)
+                    .stroke(DS.Colors.accent.opacity(0.2), lineWidth: 1)
                     .frame(width: 24, height: 24)
                     .position(x: renderer.cursorX, y: renderer.cursorY)
             }
@@ -127,35 +125,25 @@ struct RemoteDesktopView: View {
     }
 
     private var statusBar: some View {
-        HStack(spacing: 16) {
-            Button(action: { Task { await renderer.requestKeyframe() } }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                    Text("Keyframe")
-                }
+        HStack(spacing: DS.Spacing.md) {
+            ElysiumButton(title: "Keyframe", icon: "arrow.triangle.2.circlepath", color: DS.Colors.accent, style: .bordered) {
+                Task { await renderer.requestKeyframe() }
             }
-            .buttonStyle(NeonButtonStyle(color: EV.Colors.cyan, isSmall: true))
 
             Toggle(isOn: $renderer.showFPS) {
-                Text("HUD")
-                    .font(.system(.caption, design: .monospaced))
+                Text("HUD").font(DS.Typography.caption)
             }
-            .toggleStyle(SwitchToggleStyle(tint: EV.Colors.cyan))
+            .toggleStyle(SwitchToggleStyle(tint: DS.Colors.accent))
             .controlSize(.small)
 
             Spacer()
 
-            Button(action: { Task { await consoleState.disconnect() } }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "xmark.circle.fill")
-                    Text("Disconnect")
-                }
+            ElysiumButton(title: "Disconnect", icon: "xmark.circle.fill", color: DS.Colors.error, style: .bordered) {
+                Task { await consoleState.disconnect() }
             }
-            .buttonStyle(NeonButtonStyle(color: EV.Colors.red, isSmall: true))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(EV.Colors.bg)
+        .padding(.horizontal, DS.Spacing.lg)
+        .padding(.vertical, DS.Spacing.md)
     }
 }
 
