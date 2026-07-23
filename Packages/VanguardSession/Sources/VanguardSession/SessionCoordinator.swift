@@ -1,4 +1,5 @@
 import Foundation
+import os
 import VanguardDomain
 import VanguardProtocol
 import VanguardTransport
@@ -171,20 +172,32 @@ public actor NodeSessionCoordinator {
         case .pairingResponse:
             await handlePairingResponse(message)
         case .inputEvent:
-            if let event = try? JSONDecoder().decode(RemoteInputEvent.self, from: message.payload) {
-                try? await handleInputEvent(event)
+            do {
+                let event = try JSONDecoder().decode(RemoteInputEvent.self, from: message.payload)
+                try await handleInputEvent(event)
+            } catch {
+                os_log(.error, "Failed to handle input event: %{public}@", error.localizedDescription)
             }
         case .terminalInput:
-            if let payload = try? JSONDecoder().decode(TerminalInputPayload.self, from: message.payload) {
-                try? await handleTerminalInput(payload.sessionID, data: payload.data)
+            do {
+                let payload = try JSONDecoder().decode(TerminalInputPayload.self, from: message.payload)
+                try await handleTerminalInput(payload.sessionID, data: payload.data)
+            } catch {
+                os_log(.error, "Failed to handle terminal input: %{public}@", error.localizedDescription)
             }
         case .terminalOpen:
-            if let payload = try? JSONDecoder().decode(TerminalOpenPayload.self, from: message.payload) {
-                let _ = try? await handleTerminalOpen(payload.configuration)
+            do {
+                let payload = try JSONDecoder().decode(TerminalOpenPayload.self, from: message.payload)
+                let _ = try await handleTerminalOpen(payload.configuration)
+            } catch {
+                os_log(.error, "Failed to handle terminal open: %{public}@", error.localizedDescription)
             }
         case .terminalResize:
-            if let payload = try? JSONDecoder().decode(TerminalResizePayload.self, from: message.payload) {
-                try? await handleTerminalResize(payload.sessionID, columns: payload.columns, rows: payload.rows)
+            do {
+                let payload = try JSONDecoder().decode(TerminalResizePayload.self, from: message.payload)
+                try await handleTerminalResize(payload.sessionID, columns: payload.columns, rows: payload.rows)
+            } catch {
+                os_log(.error, "Failed to handle terminal resize: %{public}@", error.localizedDescription)
             }
         case .terminalClose:
             if let payload = try? JSONDecoder().decode(TerminalClosePayload.self, from: message.payload) {
@@ -192,9 +205,12 @@ public actor NodeSessionCoordinator {
             }
         case .heartbeat:
             let ackPayload = HeartbeatPayload(timestampNanos: UInt64(Date().timeIntervalSince1970 * 1_000_000_000), sequence: 0)
-            if let data = try? JSONEncoder().encode(ackPayload) {
+            do {
+                let data = try JSONEncoder().encode(ackPayload)
                 let msg = OutboundMessage(messageType: .heartbeatAck, payload: data)
-                try? await transport.send(msg)
+                try await transport.send(msg)
+            } catch {
+                os_log(.error, "Failed to send heartbeat ack: %{public}@", error.localizedDescription)
             }
         default:
             break
@@ -204,41 +220,43 @@ public actor NodeSessionCoordinator {
     private func handleHello(_ message: InboundMessage) async {
         guard let helloPayload = try? JSONDecoder().decode(HelloPayload.self, from: message.payload) else { return }
 
-        let identity = try? await identityService.getOrCreateIdentity()
-        let nodeID = identity?.nodeID ?? NodeID()
+        do {
+            let identity = try await identityService.getOrCreateIdentity()
+            let nodeID = identity.nodeID
 
-        consoleNodeID = helloPayload.nodeID
-        currentSession = NodeSession(
-            sessionID: SessionID(),
-            consoleID: helloPayload.nodeID,
-            capabilities: [],
-            connectedAt: Date()
-        )
+            consoleNodeID = helloPayload.nodeID
+            currentSession = NodeSession(
+                sessionID: SessionID(),
+                consoleID: helloPayload.nodeID,
+                capabilities: [],
+                connectedAt: Date()
+            )
 
-        let ackPayload = HelloAckPayload(
-            protocolVersion: .v1,
-            nodeID: nodeID,
-            acceptedVersion: .v1
-        )
-        if let data = try? JSONEncoder().encode(ackPayload) {
-            let msg = OutboundMessage(messageType: .helloAck, payload: data)
-            try? await transport.send(msg)
+            let ackPayload = HelloAckPayload(
+                protocolVersion: .v1,
+                nodeID: nodeID,
+                acceptedVersion: .v1
+            )
+            let ackData = try JSONEncoder().encode(ackPayload)
+            let ackMsg = OutboundMessage(messageType: .helloAck, payload: ackData)
+            try await transport.send(ackMsg)
+
+            let challenge = try await identityService.generateChallenge()
+            currentChallengeCode = challenge.code
+
+            let challengePayload = PairingChallengePayload(
+                challengeCode: challenge.code,
+                expiresAtNanos: UInt64(challenge.expiresAt.timeIntervalSince1970 * 1_000_000_000),
+                fingerprint: challenge.fingerprint
+            )
+            let challengeData = try JSONEncoder().encode(challengePayload)
+            let challengeMsg = OutboundMessage(messageType: .pairingRequest, payload: challengeData)
+            try await transport.send(challengeMsg)
+
+            updateState(.pairing(challenge.code))
+        } catch {
+            updateState(.error("Identity or pairing setup failed"))
         }
-
-        let code = String(format: "%06d", Int.random(in: 0...999999))
-        currentChallengeCode = code
-
-        let challengePayload = PairingChallengePayload(
-            challengeCode: code,
-            expiresAtNanos: UInt64(Date().addingTimeInterval(300).timeIntervalSince1970 * 1_000_000_000),
-            fingerprint: Data()
-        )
-        if let data = try? JSONEncoder().encode(challengePayload) {
-            let msg = OutboundMessage(messageType: .pairingRequest, payload: data)
-            try? await transport.send(msg)
-        }
-
-        updateState(.pairing(code))
     }
 
     private func handlePairingResponse(_ message: InboundMessage) async {
@@ -489,21 +507,29 @@ public actor ConsoleSessionCoordinator {
         case .pairingComplete:
             await handlePairingComplete(message)
         case .videoFrame:
-            if let frame = try? JSONDecoder().decode(VideoFramePayload.self, from: message.payload) {
+            do {
+                let frame = try JSONDecoder().decode(VideoFramePayload.self, from: message.payload)
                 frameContinuation?.yield(frame.payload)
+            } catch {
+                os_log(.error, "Failed to decode video frame: %{public}@", error.localizedDescription)
             }
         case .terminalOutput:
-            if let payload = try? JSONDecoder().decode(TerminalOutputPayload.self, from: message.payload) {
+            do {
+                let payload = try JSONDecoder().decode(TerminalOutputPayload.self, from: message.payload)
                 terminalContinuation?.yield(payload)
+            } catch {
+                os_log(.error, "Failed to decode terminal output: %{public}@", error.localizedDescription)
             }
         case .terminalOpened:
-            if let _ = try? JSONDecoder().decode(TerminalOpenedPayload.self, from: message.payload) {
-            }
+            break
         case .heartbeatAck:
             break
         case .error:
-            if let payload = try? JSONDecoder().decode(ErrorPayload.self, from: message.payload) {
+            do {
+                let payload = try JSONDecoder().decode(ErrorPayload.self, from: message.payload)
                 updateState(.error(payload.message))
+            } catch {
+                os_log(.error, "Failed to decode error payload: %{public}@", error.localizedDescription)
             }
         default:
             break
@@ -511,8 +537,8 @@ public actor ConsoleSessionCoordinator {
     }
 
     private func handleHelloAck(_ message: InboundMessage) async {
-        guard let payload = try? JSONDecoder().decode(HelloAckPayload.self, from: message.payload) else { return }
-        if let session = currentSession {
+        guard let _ = try? JSONDecoder().decode(HelloAckPayload.self, from: message.payload) else { return }
+        if currentSession != nil {
             updateState(.pairing("Waiting for challenge..."))
         }
     }

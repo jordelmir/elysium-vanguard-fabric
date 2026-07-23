@@ -3,15 +3,11 @@ import Metal
 import MetalKit
 import VanguardDomain
 
-// MARK: - Metal Renderer Protocol
-
 public protocol MetalRenderer: Sendable {
     func renderFrame(_ data: Data, width: Int, height: Int) async throws
     func startRendering() async throws
     func stopRendering() async
 }
-
-// MARK: - Metal Shaders
 
 private let metalShaderSource = """
 #include <metal_stdlib>
@@ -49,14 +45,18 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
 }
 """
 
-// MARK: - Metal Renderer Implementation
-
 public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate, @unchecked Sendable {
     private var device: MTLDevice?
     private var commandQueue: MTLCommandQueue?
     private var pipelineState: MTLRenderPipelineState?
-    private var texture: MTLTexture?
+    private let textureLock = NSLock()
+    private var _texture: MTLTexture?
     private var mtkView: MTKView?
+
+    private var texture: MTLTexture? {
+        get { textureLock.withLock { _texture } }
+        set { textureLock.withLock { _texture = newValue } }
+    }
 
     public override init() {
         super.init()
@@ -119,7 +119,7 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
             )
         }
 
-        self.texture = newTexture
+        texture = newTexture
         await MainActor.run {
             self.mtkView?.needsDisplay = true
         }
@@ -138,8 +138,6 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
         }
     }
 
-    // MARK: - MTKViewDelegate
-
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     public func draw(in view: MTKView) {
@@ -151,8 +149,8 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
 
         renderEncoder.setRenderPipelineState(pipelineState)
 
-        if let texture = texture {
-            renderEncoder.setFragmentTexture(texture, index: 0)
+        if let currentTexture = texture {
+            renderEncoder.setFragmentTexture(currentTexture, index: 0)
         }
 
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)

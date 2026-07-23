@@ -4,8 +4,6 @@ import CoreMedia
 import CoreVideo
 import VanguardDomain
 
-// MARK: - VideoToolbox H.264 Decoder
-
 @available(macOS 10.13, *)
 public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable {
     private let state: DecoderState
@@ -19,6 +17,12 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             VTDecompressionSessionInvalidate(existing)
             await state.setSession(nil)
         }
+
+        let formatDescription = try createFormatDescription(from: codecConfiguration)
+        await state.setFormatDescription(formatDescription)
+
+        let session = try createSession(formatDescription: formatDescription)
+        await state.setSession(session)
     }
 
     public func decodeFrame(_ frame: EncodedVideoFrame) async throws -> DecodedVideoFrame {
@@ -26,17 +30,59 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             throw DecoderError.decoderSessionCreationFailed
         }
 
-        let sampleBuffer = try createSampleBuffer(from: frame)
+        guard let formatDesc = await state.getFormatDescription() else {
+            throw DecoderError.decoderSessionCreationFailed
+        }
 
-        var outputFrame: CVPixelBuffer?
+        let context = DecodeContext()
+
+        let blockBuffer = try frame.payload.withUnsafeBytes { ptr -> CMBlockBuffer in
+            guard let baseAddress = ptr.baseAddress else {
+                throw DecoderError.invalidFrameData
+            }
+            var blockBuffer: CMBlockBuffer?
+            let status = CMBlockBufferCreateWithMemoryBlock(
+                allocator: kCFAllocatorDefault,
+                memoryBlock: UnsafeMutableRawPointer(mutating: baseAddress),
+                blockLength: frame.payload.count,
+                blockAllocator: kCFAllocatorNull,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: frame.payload.count,
+                flags: 0,
+                blockBufferOut: &blockBuffer
+            )
+            guard status == noErr, let buffer = blockBuffer else {
+                throw DecoderError.invalidFrameData
+            }
+            return buffer
+        }
+
+        var sampleBuffer: CMSampleBuffer?
+        let sampleStatus = CMSampleBufferCreateReady(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: blockBuffer,
+            formatDescription: formatDesc,
+            sampleCount: 1,
+            sampleTimingEntryCount: 0,
+            sampleTimingArray: nil,
+            sampleSizeEntryCount: 0,
+            sampleSizeArray: nil,
+            sampleBufferOut: &sampleBuffer
+        )
+
+        guard sampleStatus == noErr, let sample = sampleBuffer else {
+            throw DecoderError.invalidFrameData
+        }
+
         let decodeFlags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
         var flagsOut: VTDecodeInfoFlags = []
 
         let status = VTDecompressionSessionDecodeFrame(
             session,
-            sampleBuffer: sampleBuffer,
+            sampleBuffer: sample,
             flags: decodeFlags,
-            frameRefcon: nil,
+            frameRefcon: Unmanaged.passRetained(context).toOpaque(),
             infoFlagsOut: &flagsOut
         )
 
@@ -44,7 +90,7 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             throw DecoderError.decodingFailed(status: status)
         }
 
-        guard let outputBuffer = outputFrame else {
+        guard let outputBuffer = context.outputPixelBuffer else {
             throw DecoderError.invalidFrameData
         }
 
@@ -66,53 +112,122 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
         await state.setFormatDescription(nil)
     }
 
-    // MARK: - Helpers
+    private func createFormatDescription(from configData: Data) throws -> CMVideoFormatDescription {
+        var formatDescription: CMVideoFormatDescription?
 
-    private func createSampleBuffer(from frame: EncodedVideoFrame) throws -> CMSampleBuffer {
-        var blockBuffer: CMBlockBuffer?
-        let status = CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: nil,
-            blockLength: frame.payload.count,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: frame.payload.count,
-            flags: 0,
-            blockBufferOut: &blockBuffer
+        let nalUnits = extractNALUnits(from: configData)
+        var spsData: Data?
+        var ppsData: Data?
+
+        for nal in nalUnits {
+            let nalType = nal[0] & 0x1F
+            if nalType == 7 {
+                spsData = Data(nal)
+            } else if nalType == 8 {
+                ppsData = Data(nal)
+            }
+        }
+
+        guard let sps = spsData, let pps = ppsData else {
+            throw DecoderError.decoderSessionCreationFailed
+        }
+
+        let status = sps.withUnsafeBytes { spsPtr -> OSStatus in
+            pps.withUnsafeBytes { ppsPtr -> OSStatus in
+                var parameterSetPointers: [UnsafePointer<UInt8>] = []
+                var parameterSetSizes: [Int] = []
+
+                if let spsBase = spsPtr.baseAddress {
+                    parameterSetPointers.append(spsBase.assumingMemoryBound(to: UInt8.self))
+                    parameterSetSizes.append(sps.count)
+                }
+                if let ppsBase = ppsPtr.baseAddress {
+                    parameterSetPointers.append(ppsBase.assumingMemoryBound(to: UInt8.self))
+                    parameterSetSizes.append(pps.count)
+                }
+
+                return parameterSetPointers.withUnsafeBufferPointer { pointersPtr -> OSStatus in
+                    parameterSetSizes.withUnsafeBufferPointer { sizesPtr -> OSStatus in
+                        CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                            allocator: kCFAllocatorDefault,
+                            parameterSetCount: pointersPtr.count,
+                            parameterSetPointers: pointersPtr.baseAddress!,
+                            parameterSetSizes: sizesPtr.baseAddress!,
+                            nalUnitHeaderLength: 4,
+                            formatDescriptionOut: &formatDescription
+                        )
+                    }
+                }
+            }
+        }
+
+        guard status == noErr, let desc = formatDescription else {
+            throw DecoderError.decoderSessionCreationFailed
+        }
+
+        return desc
+    }
+
+    private func createSession(formatDescription: CMVideoFormatDescription) throws -> VTDecompressionSession {
+        var session: VTDecompressionSession?
+
+        var callbackRecord = VTDecompressionOutputCallbackRecord(
+            decompressionOutputCallback: decoderCallback,
+            decompressionOutputRefCon: nil
         )
 
-        guard status == noErr, let buffer = blockBuffer else {
-            throw DecoderError.invalidFrameData
-        }
+        let videoDecoderSpecification: [String: Any] = [
+            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
+        ]
 
-        frame.payload.withUnsafeBytes { ptr in
-            guard let baseAddress = ptr.baseAddress else { return }
-            CMBlockBufferReplaceDataBytes(with: baseAddress, blockBuffer: buffer, offsetIntoDestination: 0, dataLength: frame.payload.count)
-        }
-
-        var sampleBuffer: CMSampleBuffer?
-        let sampleStatus = CMSampleBufferCreateReady(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: buffer,
-            formatDescription: nil,
-            sampleCount: 1,
-            sampleTimingEntryCount: 0,
-            sampleTimingArray: nil,
-            sampleSizeEntryCount: 0,
-            sampleSizeArray: nil,
-            sampleBufferOut: &sampleBuffer
+        let status = VTDecompressionSessionCreate(
+            allocator: nil,
+            formatDescription: formatDescription,
+            decoderSpecification: videoDecoderSpecification as CFDictionary,
+            imageBufferAttributes: nil,
+            outputCallback: &callbackRecord,
+            decompressionSessionOut: &session
         )
 
-        guard sampleStatus == noErr, let sample = sampleBuffer else {
-            throw DecoderError.invalidFrameData
+        guard status == noErr, let newSession = session else {
+            throw DecoderError.decoderSessionCreationFailed
         }
 
-        return sample
+        return newSession
+    }
+
+    private func extractNALUnits(from data: Data) -> [[UInt8]] {
+        var units: [[UInt8]] = []
+        var i = 0
+        let bytes = [UInt8](data)
+
+        while i < bytes.count - 3 {
+            if bytes[i] == 0 && bytes[i + 1] == 0 {
+                if bytes[i + 2] == 1 {
+                    let start = i + 3
+                    if start < bytes.count {
+                        var end = start
+                        while end < bytes.count - 2 {
+                            if bytes[end] == 0 && bytes[end + 1] == 0 && (bytes[end + 2] == 1 || bytes[end + 2] == 0) {
+                                break
+                            }
+                            end += 1
+                        }
+                        if end >= bytes.count - 2 { end = bytes.count }
+                        units.append(Array(bytes[start..<end]))
+                    }
+                    i += 3
+                } else {
+                    i += 2
+                }
+            } else {
+                i += 1
+            }
+        }
+
+        return units
     }
 }
-
-// MARK: - Decoder State (safe concurrent access)
 
 private final class DecoderState: @unchecked Sendable {
     private var session: VTDecompressionSession?
@@ -134,4 +249,24 @@ private final class DecoderState: @unchecked Sendable {
     func setFormatDescription(_ description: CMVideoFormatDescription?) {
         lock.withLock { self.formatDescription = description }
     }
+}
+
+private final class DecodeContext {
+    var outputPixelBuffer: CVPixelBuffer?
+}
+
+@available(macOS 10.13, *)
+private func decoderCallback(
+    decompressionOutputRefCon: UnsafeMutableRawPointer?,
+    sourceFrameRefCon: UnsafeMutableRawPointer?,
+    status: OSStatus,
+    infoFlags: VTDecodeInfoFlags,
+    imageBuffer: CVImageBuffer?,
+    presentationTimeStamp: CMTime,
+    presentationDuration: CMTime
+) {
+    guard let refCon = sourceFrameRefCon else { return }
+    let context = Unmanaged<DecodeContext>.fromOpaque(refCon).takeRetainedValue()
+    guard status == noErr else { return }
+    context.outputPixelBuffer = imageBuffer
 }

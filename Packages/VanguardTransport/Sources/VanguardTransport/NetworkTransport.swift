@@ -51,9 +51,12 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
             parameters = NWParameters.tcp
         }
 
+        guard let port = NWEndpoint.Port(rawValue: endpoint.port) else {
+            throw TransportError.connectFailed
+        }
         let nwEndpoint = NWEndpoint.hostPort(
             host: NWEndpoint.Host(endpoint.host),
-            port: NWEndpoint.Port(rawValue: endpoint.port)!
+            port: port
         )
 
         let connection = NWConnection(to: nwEndpoint, using: parameters)
@@ -138,7 +141,10 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
             parameters = NWParameters.tcp
         }
 
-        let listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            throw TransportError.connectFailed
+        }
+        let listener = try NWListener(using: parameters, on: nwPort)
         self.listener = listener
 
         listener.newConnectionHandler = { [weak self] newConnection in
@@ -204,17 +210,16 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     }
 }
 
-// MARK: - Thread-Safe Atomic Flag
-
 private final class AtomicFlag: @unchecked Sendable {
-    private var value: Int32 = 0
+    private var locked = false
+    private let lock = NSLock()
 
     func get() -> Bool {
-        OSAtomicOr32Barrier(0, &value) != 0
+        lock.withLock { locked }
     }
 
     func set() {
-        _ = OSAtomicOr32Barrier(1, &value)
+        lock.withLock { locked = true }
     }
 }
 

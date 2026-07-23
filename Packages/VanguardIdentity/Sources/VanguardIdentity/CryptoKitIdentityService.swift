@@ -149,9 +149,12 @@ public final class CryptoKitIdentityService: IdentityService, @unchecked Sendabl
     // MARK: - Keychain Helpers
 
     private func storeKeyData(_ data: Data, identifier: String) throws {
+        guard let tagData = "\(keychainService).\(identifier)".data(using: .utf8) else {
+            throw PairingError.keychainFailure(reason: "Invalid identifier encoding")
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: "\(keychainService).\(identifier)".data(using: .utf8)!,
+            kSecAttrApplicationTag as String: tagData,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData as String: data
         ]
@@ -163,9 +166,10 @@ public final class CryptoKitIdentityService: IdentityService, @unchecked Sendabl
     }
 
     private func loadKeyData(identifier: String) -> Data? {
+        guard let tagData = "\(keychainService).\(identifier)".data(using: .utf8) else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: "\(keychainService).\(identifier)".data(using: .utf8)!,
+            kSecAttrApplicationTag as String: tagData,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -189,9 +193,10 @@ public final class CryptoKitIdentityService: IdentityService, @unchecked Sendabl
     }
 
     private func deleteKeychainItem(identifier: String) {
+        guard let tagData = "\(keychainService).\(identifier)".data(using: .utf8) else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: "\(keychainService).\(identifier)".data(using: .utf8)!
+            kSecAttrApplicationTag as String: tagData
         ]
         SecItemDelete(query as CFDictionary)
     }
