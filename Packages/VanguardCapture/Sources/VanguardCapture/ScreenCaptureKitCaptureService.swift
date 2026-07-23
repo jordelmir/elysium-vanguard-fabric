@@ -4,15 +4,14 @@ import CoreMedia
 import CoreVideo
 import VanguardDomain
 
-// MARK: - ScreenCaptureKit Service
-
 @available(macOS 12.3, *)
 public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureService, SCStreamOutput, @unchecked Sendable {
-    private var stream: SCStream?
-    private var currentState: CaptureState = .idle
-    private var stateContinuation: AsyncStream<CaptureState>.Continuation?
-    private var frameContinuation: AsyncThrowingStream<Data, Error>.Continuation?
-    private var frameCount: UInt64 = 0
+    private let lock = NSLock()
+    private var _stream: SCStream?
+    private var _frameContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    private var _currentState: CaptureState = .idle
+    private var _stateContinuation: AsyncStream<CaptureState>.Continuation?
+    private var _frameCount: UInt64 = 0
 
     public override init() {
         super.init()
@@ -20,13 +19,18 @@ public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureServic
 
     public var stateUpdates: AsyncStream<CaptureState> {
         AsyncStream { [weak self] continuation in
-            self?.stateContinuation = continuation
+            guard let self else { return }
+            self.lock.withLock {
+                self._stateContinuation = continuation
+            }
         }
     }
 
     private func updateState(_ newState: CaptureState) {
-        currentState = newState
-        stateContinuation?.yield(newState)
+        lock.withLock {
+            _currentState = newState
+            _stateContinuation?.yield(newState)
+        }
     }
 
     public func availableSources() async throws -> [CaptureSource] {
@@ -85,29 +89,43 @@ public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureServic
         let stream = SCStream(filter: filter, configuration: streamConfig, delegate: nil)
 
         let (streamAsync, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
-        self.frameContinuation = continuation
-        self.frameCount = 0
+
+        lock.withLock {
+            self._frameContinuation = continuation
+            self._frameCount = 0
+        }
 
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
         try await stream.startCapture()
 
-        self.stream = stream
+        lock.withLock {
+            self._stream = stream
+        }
         updateState(.streaming)
 
         return streamAsync
     }
 
     public func stopCapture() async {
-        if let stream {
-            try? await stream.stopCapture()
-            self.stream = nil
+        let streamToStop: SCStream? = lock.withLock {
+            let s = _stream
+            _stream = nil
+            return s
         }
-        frameContinuation?.finish()
-        frameContinuation = nil
+
+        if let stream = streamToStop {
+            try? await stream.stopCapture()
+        }
+
+        let continuation: AsyncThrowingStream<Data, Error>.Continuation? = lock.withLock {
+            let c = _frameContinuation
+            _frameContinuation = nil
+            return c
+        }
+
+        continuation?.finish()
         updateState(.stopped)
     }
-
-    // MARK: - SCStreamOutput
 
     nonisolated public func stream(
         _ stream: SCStream,
@@ -132,12 +150,9 @@ public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureServic
         let data = Data(bytes: baseAddress, count: dataSize)
 
         Task { [weak self] in
-            guard let self = self else { return }
-            await self.handleFrame(data)
+            guard let self else { return }
+            let continuation = self.lock.withLock { self._frameContinuation }
+            continuation?.yield(data)
         }
-    }
-
-    private func handleFrame(_ data: Data) {
-        frameContinuation?.yield(data)
     }
 }

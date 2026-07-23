@@ -8,12 +8,33 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     private let host: String
     private let port: UInt16
     private let useTLS: Bool
-    private var connection: NWConnection?
-    private var listener: NWListener?
-    private var receiveTask: Task<Void, Never>?
     private let heartbeatInterval: TimeInterval
-    private var isRunning = false
     private let state: ConnectionState
+    private let lock = NSLock()
+    private var _connection: NWConnection?
+    private var _listener: NWListener?
+    private var _receiveTask: Task<Void, Never>?
+    private var _isRunning = false
+
+    private var connection: NWConnection? {
+        get { lock.withLock { _connection } }
+        set { lock.withLock { _connection = newValue } }
+    }
+
+    private var listener: NWListener? {
+        get { lock.withLock { _listener } }
+        set { lock.withLock { _listener = newValue } }
+    }
+
+    private var receiveTask: Task<Void, Never>? {
+        get { lock.withLock { _receiveTask } }
+        set { lock.withLock { _receiveTask = newValue } }
+    }
+
+    private var isRunning: Bool {
+        get { lock.withLock { _isRunning } }
+        set { lock.withLock { _isRunning = newValue } }
+    }
 
     public init(
         host: String,
@@ -100,7 +121,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     }
 
     public func send(_ message: OutboundMessage) async throws {
-        guard let connection = connection else {
+        guard let conn = connection else {
             throw TransportError.notConnected
         }
 
@@ -113,7 +134,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         let data = frame.totalData
 
         return try await withCheckedThrowingContinuation { continuation in
-            connection.send(content: data, completion: .contentProcessed { error in
+            conn.send(content: data, completion: .contentProcessed { error in
                 if let error = error {
                     continuation.resume(throwing: TransportError.sendFailed(reason: error.localizedDescription))
                 } else {
@@ -126,6 +147,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     public func disconnect(reason: DisconnectReason) async {
         isRunning = false
         receiveTask?.cancel()
+        receiveTask = nil
         connection?.cancel()
         connection = nil
         listener?.cancel()
@@ -144,21 +166,19 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw TransportError.connectFailed
         }
-        let listener = try NWListener(using: parameters, on: nwPort)
-        self.listener = listener
+        let newListener = try NWListener(using: parameters, on: nwPort)
+        self.listener = newListener
 
-        listener.newConnectionHandler = { [weak self] newConnection in
-            guard let self = self else { return }
+        newListener.newConnectionHandler = { [weak self] newConnection in
+            guard let self else { return }
             self.connection = newConnection
             self.isRunning = true
             self.receiveTask = Task { await self.startReceiving() }
             newConnection.start(queue: .global(qos: .userInitiated))
         }
 
-        listener.start(queue: .global(qos: .userInitiated))
+        newListener.start(queue: .global(qos: .userInitiated))
     }
-
-    // MARK: - Private
 
     private func startReceiving() async {
         while isRunning {
@@ -183,12 +203,12 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     }
 
     private func receiveData(maxSize: Int) async throws -> Data {
-        guard let connection = connection else {
+        guard let conn = connection else {
             throw TransportError.notConnected
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: maxSize) { data, _, isComplete, error in
+            conn.receive(minimumIncompleteLength: 1, maximumLength: maxSize) { data, _, isComplete, error in
                 if let error = error {
                     continuation.resume(throwing: TransportError.receiveFailed(reason: error.localizedDescription))
                 } else if let data = data, !data.isEmpty {
@@ -222,8 +242,6 @@ private final class AtomicFlag: @unchecked Sendable {
         lock.withLock { locked = true }
     }
 }
-
-// MARK: - Connection State (actor for safe continuation access)
 
 private actor ConnectionState {
     private var incomingContinuation: AsyncThrowingStream<InboundMessage, Error>.Continuation?
