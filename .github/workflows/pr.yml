@@ -1,0 +1,39 @@
+name: PR Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Swift Version
+        run: swift --version
+
+      - name: Resolve Dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build 2>&1
+
+      - name: Test
+        run: swift test --parallel 2>&1
+
+      - name: Check for Secrets
+        run: |
+          if grep -r "password\|token\|privateKey\|secret\|apiKey" --include="*.swift" --include="*.json" --include="*.plist" . | grep -v "Tests/" | grep -v "TestSupport" | grep -v "Mock"; then
+            echo "WARNING: Potential secrets found in source"
+            exit 1
+          fi
+
+      - name: Check SwiftFormat
+        run: |
+          if command -v swiftformat &> /dev/null; then
+            swiftformat --lint . 2>&1 || true
+          fi

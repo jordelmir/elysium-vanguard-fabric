@@ -1,0 +1,19 @@
+# Build
+.build/
+.swiftpm/
+*.o
+*.dSYM/
+
+# macOS
+.DS_Store
+*.xcuserstate
+DerivedData/
+
+# Xcode
+xcuserdata/
+*.xcworkspace
+*.xcodeproj
+
+# Temp
+/tmp/
+*.tmp

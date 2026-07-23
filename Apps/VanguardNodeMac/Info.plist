@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Elysium Node</string>
+    <key>CFBundleExecutable</key>
+    <string>VanguardNodeMac</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.elysiumvanguard.fabric.node</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>VanguardNodeMac</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Elysium Node needs screen capture access to stream your display to the console.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Elysium Node needs accessibility access to control mouse and keyboard remotely.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Elysium Node needs local network access to discover and connect to consoles on your LAN.</string>
+</dict>
+</plist>

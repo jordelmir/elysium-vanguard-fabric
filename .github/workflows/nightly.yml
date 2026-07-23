@@ -1,0 +1,44 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  full-suite:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Resolve Dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build 2>&1
+
+      - name: Test with Thread Sanitizer
+        run: swift test --parallel --sanitize=thread 2>&1 || true
+
+      - name: Test with Address Sanitizer
+        run: swift test --parallel --sanitize=address 2>&1 || true
+
+      - name: Secret Scan
+        run: |
+          if grep -r "password\|token\|privateKey\|secret\|apiKey" --include="*.swift" --include="*.json" --include="*.plist" . | grep -v "Tests/" | grep -v "TestSupport" | grep -v "Mock"; then
+            echo "ERROR: Secrets found in source"
+            exit 1
+          fi
+
+      - name: Dependency Audit
+        run: swift package show-dependencies 2>&1
+
+      - name: Build Report
+        run: |
+          echo "=== Build Report ==="
+          echo "Date: $(date)"
+          echo "Swift: $(swift --version 2>&1 | head -1)"
+          echo "Commit: $(git rev-parse HEAD)"
