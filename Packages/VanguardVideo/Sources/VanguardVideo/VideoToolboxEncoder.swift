@@ -3,13 +3,18 @@ import VideoToolbox
 import CoreMedia
 import VanguardDomain
 
-// MARK: - VideoToolbox H.264 Encoder
-
 @available(macOS 10.13, *)
 public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable {
     private let state: EncoderState
     private var frameID: UInt64 = 0
     private var codecConfigRevision: UInt32 = 1
+    private let lock = NSLock()
+    private var _currentBitrate: Int = 5_000_000
+    private var _currentFPS: Int = 60
+
+    public var currentBitrate: Int {
+        lock.withLock { _currentBitrate }
+    }
 
     public init() {
         self.state = EncoderState()
@@ -19,6 +24,11 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
         if let existing = await state.getSession() {
             VTCompressionSessionInvalidate(existing)
             await state.setSession(nil)
+        }
+
+        lock.withLock {
+            _currentBitrate = bitrate
+            _currentFPS = fps
         }
 
         var session: VTCompressionSession?
@@ -31,7 +41,7 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
             outputCallback: encoderCallback,
-            refcon: Unmanaged.passUnretained(self).toOpaque(),
+            refcon: nil,
             compressionSessionOut: &session
         )
 
@@ -42,9 +52,11 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: bitrate))
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: fps * 2))
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: fps * 4))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_H264EntropyMode, value: kVTH264EntropyMode_CABAC)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: NSNumber(value: 4))
 
         VTCompressionSessionPrepareToEncodeFrames(session)
         await state.setSession(session)
@@ -85,7 +97,12 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
     public func requestKeyframe() async {
         guard let session = await state.getSession() else { return }
         VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
-        // Force keyframe on next encode by setting forceKeyFrame property
+    }
+
+    public func updateBitrate(_ newBitrate: Int) async {
+        guard let session = await state.getSession() else { return }
+        lock.withLock { _currentBitrate = newBitrate }
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: newBitrate))
     }
 
     public func reset() async {
@@ -97,13 +114,12 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
         codecConfigRevision += 1
     }
 
-    // MARK: - Private
-
     private func createPixelBuffer(from frame: Data, width: Int, height: Int) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let attrs = [
             kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: true
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
         ] as CFDictionary
 
         let status = CVPixelBufferCreate(
@@ -136,8 +152,10 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
             throw EncoderError.invalidPixelBuffer
         }
 
-        guard let dataProvider = CGDataProvider(data: frame as CFData),
-              let cgImage = CGImage(
+        frame.withUnsafeBytes { ptr in
+            guard let baseAddress = ptr.baseAddress else { return }
+            guard let dataProvider = CGDataProvider(dataInfo: nil, data: baseAddress, size: frame.count, releaseData: { _, _, _ in }) else { return }
+            if let cgImage = CGImage(
                 width: width,
                 height: height,
                 bitsPerComponent: 8,
@@ -149,17 +167,14 @@ public final class VideoToolboxEncoder: VideoEncoderService, @unchecked Sendable
                 decode: nil,
                 shouldInterpolate: false,
                 intent: .defaultIntent
-              ) else {
-            throw EncoderError.invalidPixelBuffer
+            ) {
+                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            }
         }
-
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         return buffer
     }
 }
-
-// MARK: - Encoder State (safe concurrent access)
 
 private final class EncoderState: @unchecked Sendable {
     private var session: VTCompressionSession?
@@ -174,8 +189,6 @@ private final class EncoderState: @unchecked Sendable {
     }
 }
 
-// MARK: - Encode Context (for callback)
-
 private final class EncodeContext {
     let continuation: CheckedContinuation<(Data, Bool), Error>
     let frameID: UInt64
@@ -185,8 +198,6 @@ private final class EncodeContext {
         self.frameID = frameID
     }
 }
-
-// MARK: - C Callback
 
 @available(macOS 10.13, *)
 private func encoderCallback(
