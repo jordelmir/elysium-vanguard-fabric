@@ -135,9 +135,9 @@ public final class CryptoKitIdentityService: IdentityService, @unchecked Sendabl
 
         return PairingChallenge(
             code: code,
-            expiresAt: Date().addingTimeInterval(120),
+            expiresAt: Date().addingTimeInterval(90),
             fingerprint: fingerprint,
-            maxAttempts: 3
+            maxAttempts: 5
         )
     }
 

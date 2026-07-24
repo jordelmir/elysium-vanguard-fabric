@@ -37,3 +37,20 @@ jobs:
           if command -v swiftformat &> /dev/null; then
             swiftformat --lint . 2>&1 || true
           fi
+
+      - name: Verify Build Artifacts
+        run: |
+          bash build.sh
+          test -f .build/VanguardNodeMac.app/Contents/MacOS/VanguardNodeMac
+          test -f .build/VanguardConsoleMac.app/Contents/MacOS/VanguardConsoleMac
+          echo "Build artifacts verified"
+
+      - name: Check Package Dependencies
+        run: swift package show-dependencies 2>&1
+
+      - name: Validate Protocol Compliance
+        run: |
+          echo "Checking for stub implementations..."
+          if grep -r "fatalError\|preconditionFailure\|TODO\|FIXME\|HACK" --include="*.swift" Packages/ | grep -v "Tests/" | grep -v "TestSupport" | grep -v "Mock" | grep -v "SKILL.md"; then
+            echo "WARNING: Found stubs or TODOs in production code"
+          fi

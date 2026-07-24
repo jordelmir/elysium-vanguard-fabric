@@ -36,12 +36,29 @@ struct TerminalView: View {
                         .font(DS.Typography.micro)
                         .foregroundColor(DS.Colors.success)
                         .tracking(2)
-                    Text("Remote shell")
+                    Text("Remote shell • \(terminalState.shell)")
                         .font(DS.Typography.caption)
                         .foregroundColor(DS.Colors.textQuaternary)
                 }
             }
             Spacer()
+            HStack(spacing: DS.Spacing.sm) {
+                Button(action: { terminalState.clearOutput() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.textQuaternary)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear output")
+
+                Button(action: { terminalState.toggleWrap() }) {
+                    Image(systemName: terminalState.wordWrap ? "arrow.left.and.right" : "text.alignleft")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(terminalState.wordWrap ? DS.Colors.success : DS.Colors.textQuaternary)
+                }
+                .buttonStyle(.borderless)
+                .help("Toggle word wrap")
+            }
         }
         .padding(.horizontal, DS.Spacing.lg)
         .padding(.vertical, DS.Spacing.md)
@@ -102,9 +119,13 @@ final class TerminalViewState: ObservableObject {
     @Published var input = ""
     @Published var isFullscreen = false
     @Published var isOpen = false
+    @Published var wordWrap = false
+    @Published var shell = "/bin/zsh"
 
     private var sessionID: TerminalSessionID?
     private var outputTask: Task<Void, Never>?
+    private var commandHistory: [String] = []
+    private var historyIndex: Int = -1
     private weak var consoleState: ConsoleAppState?
 
     func openTerminal(consoleState: ConsoleAppState) async {
@@ -123,12 +144,24 @@ final class TerminalViewState: ObservableObject {
 
     func sendInput() {
         guard let sessionID = sessionID, let consoleState = consoleState, !input.isEmpty else { return }
+        
+        commandHistory.append(input)
+        historyIndex = commandHistory.count
+        
         Task {
             let data = (input + "\n").data(using: .utf8) ?? Data()
             try? await consoleState.sendTerminalInput(sessionID, data: data)
             output += "$ " + input + "\n"
             input = ""
         }
+    }
+
+    func clearOutput() {
+        output = ""
+    }
+
+    func toggleWrap() {
+        wordWrap.toggle()
     }
 
     func closeTerminal(consoleState: ConsoleAppState) async {
@@ -138,6 +171,22 @@ final class TerminalViewState: ObservableObject {
     }
 
     func toggleFullscreen() { isFullscreen.toggle() }
+
+    func previousCommand() {
+        guard historyIndex > 0 else { return }
+        historyIndex -= 1
+        input = commandHistory[historyIndex]
+    }
+
+    func nextCommand() {
+        guard historyIndex < commandHistory.count - 1 else {
+            historyIndex = commandHistory.count
+            input = ""
+            return
+        }
+        historyIndex += 1
+        input = commandHistory[historyIndex]
+    }
 
     private func startListeningForOutput(consoleState: ConsoleAppState) {
         outputTask = Task {

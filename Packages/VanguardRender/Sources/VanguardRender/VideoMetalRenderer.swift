@@ -1,10 +1,13 @@
 import Foundation
+import CoreVideo
 import Metal
 import MetalKit
 import VanguardDomain
 
 public protocol MetalRenderer: Sendable {
     func renderFrame(_ data: Data, width: Int, height: Int) async throws
+    func renderPixelBuffer(_ pixelBuffer: CVPixelBuffer) async throws
+    func renderPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) async throws
     func startRendering() async throws
     func stopRendering() async
 }
@@ -18,70 +21,113 @@ struct VertexOut {
     float2 texCoord;
 };
 
-vertex VertexOut vertexShader(uint vertexID [[vertex_id]]) {
+struct Uniforms {
+    float2 texSize;
+    float2 viewSize;
+};
+
+vertex VertexOut vertexShader(uint vertexID [[vertex_id]],
+                              constant float2 *positions [[buffer(0)]],
+                              constant float2 *texCoords [[buffer(1)]]) {
     VertexOut out;
-    float2 positions[4] = {
-        float2(-1.0,  1.0),
-        float2(-1.0, -1.0),
-        float2( 1.0,  1.0),
-        float2( 1.0, -1.0)
-    };
-    float2 texCoords[4] = {
-        float2(0.0, 0.0),
-        float2(0.0, 1.0),
-        float2(1.0, 0.0),
-        float2(1.0, 1.0)
-    };
     out.position = float4(positions[vertexID], 0.0, 1.0);
     out.texCoord = texCoords[vertexID];
     return out;
 }
 
 fragment float4 fragmentShader(VertexOut in [[stage_in]],
-                                texture2d<float> tex [[texture(0)]]) {
+                                texture2d<float> tex [[texture(0)]],
+                                constant Uniforms &uniforms [[buffer(0)]]) {
     constexpr sampler texSampler(mag_filter::linear, min_filter::linear);
-    float4 color = tex.sample(texSampler, in.texCoord);
-    return color;
+
+    float texAspect = uniforms.texSize.x / uniforms.texSize.y;
+    float viewAspect = uniforms.viewSize.x / uniforms.viewSize.y;
+
+    float scaleX = 1.0;
+    float scaleY = 1.0;
+
+    if (texAspect > viewAspect) {
+        scaleY = viewAspect / texAspect;
+    } else {
+        scaleX = texAspect / viewAspect;
+    }
+
+    float2 centered = in.texCoord - float2(0.5);
+    float2 scaled = float2(centered.x / scaleX, centered.y / scaleY);
+    float2 finalCoord = scaled + float2(0.5);
+
+    if (finalCoord.x < 0.0 || finalCoord.x > 1.0 || finalCoord.y < 0.0 || finalCoord.y > 1.0) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    return tex.sample(texSampler, finalCoord);
 }
 """
 
+private let kMaxInflightBuffers = 3
+
 public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate, @unchecked Sendable {
-    private var device: MTLDevice?
-    private var commandQueue: MTLCommandQueue?
-    private var pipelineState: MTLRenderPipelineState?
-    private let textureLock = NSLock()
-    private var _texture: MTLTexture?
+    private let device: MTLDevice
+    private let commandQueue: MTLCommandQueue
+    private let pipelineState: MTLRenderPipelineState
+    private var textureCache: CVMetalTextureCache?
     private var mtkView: MTKView?
 
-    private var texture: MTLTexture? {
-        get { textureLock.withLock { _texture } }
-        set { textureLock.withLock { _texture = newValue } }
-    }
+    private let lock = NSLock()
+    private var inflightSemaphore = DispatchSemaphore(value: kMaxInflightBuffers)
+    private var inflightIndex = 0
+    private var vertexBuffers: [MTLBuffer] = []
+    private var texCoordBuffers: [MTLBuffer] = []
+    private var uniformBuffers: [MTLBuffer] = []
+    private var pendingPixelBuffer: CVPixelBuffer?
+    private var pendingTextureSize = CGSize.zero
+    public var lastRenderTimestamp: TimeInterval = 0
 
     public override init() {
-        super.init()
-        setupMetal()
-    }
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            fatalError("Metal is not supported on this device")
+        }
+        self.device = device
 
-    private func setupMetal() {
-        device = MTLCreateSystemDefaultDevice()
-        commandQueue = device?.makeCommandQueue()
+        guard let queue = device.makeCommandQueue() else {
+            fatalError("Failed to create Metal command queue")
+        }
+        self.commandQueue = queue
 
-        guard let device = device else { return }
+        var cache: CVMetalTextureCache?
+        let cacheStatus = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        guard cacheStatus == kCVReturnSuccess, let cache = cache else {
+            fatalError("Failed to create CVMetalTextureCache")
+        }
+        self.textureCache = cache
+
+        var library: MTLLibrary
+        do {
+            library = try device.makeLibrary(source: metalShaderSource, options: nil)
+        } catch {
+            fatalError("Failed to compile Metal shader: \(error)")
+        }
+
+        let vertexFunction = library.makeFunction(name: "vertexShader")
+        let fragmentFunction = library.makeFunction(name: "fragmentShader")
+
+        let pipelineDescriptor = MTLRenderPipelineDescriptor()
+        pipelineDescriptor.vertexFunction = vertexFunction
+        pipelineDescriptor.fragmentFunction = fragmentFunction
+        pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
 
         do {
-            let library = try device.makeLibrary(source: metalShaderSource, options: nil)
-            let vertexFunction = library.makeFunction(name: "vertexShader")
-            let fragmentFunction = library.makeFunction(name: "fragmentShader")
-
-            let pipelineDescriptor = MTLRenderPipelineDescriptor()
-            pipelineDescriptor.vertexFunction = vertexFunction
-            pipelineDescriptor.fragmentFunction = fragmentFunction
-            pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-
-            pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+            self.pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
-            print("Metal setup failed: \(error)")
+            fatalError("Failed to create pipeline state: \(error)")
+        }
+
+        super.init()
+
+        for _ in 0..<kMaxInflightBuffers {
+            vertexBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
+            texCoordBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
+            uniformBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 4, options: .storageModeShared)!)
         }
     }
 
@@ -92,43 +138,100 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
             view.delegate = self
             view.colorPixelFormat = .bgra8Unorm
             view.framebufferOnly = false
+            view.preferredFramesPerSecond = 60
+            view.enableSetNeedsDisplay = false
+            view.isPaused = true
         }
     }
 
     public func renderFrame(_ data: Data, width: Int, height: Int) async throws {
-        guard let device = device else { return }
-
-        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm,
-            width: width,
-            height: height,
-            mipmapped: false
+        var buffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any]
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attrs as CFDictionary,
+            &buffer
         )
-        textureDescriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+        guard status == kCVReturnSuccess, let createdBuffer = buffer else {
+            throw NSError(domain: "VideoMetalRenderer", code: Int(status))
+        }
 
-        guard let newTexture = device.makeTexture(descriptor: textureDescriptor) else { return }
+        CVPixelBufferLockBaseAddress(createdBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(createdBuffer, []) }
+
+        guard let dest = CVPixelBufferGetBaseAddress(createdBuffer) else {
+            throw NSError(domain: "VideoMetalRenderer", code: -2)
+        }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(createdBuffer)
+        let srcBytesPerRow = width * 4
 
         data.withUnsafeBytes { ptr in
             guard let baseAddress = ptr.baseAddress else { return }
-            newTexture.replace(
-                region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
-                                 size: MTLSize(width: width, height: height, depth: 1)),
-                mipmapLevel: 0,
-                withBytes: baseAddress,
-                bytesPerRow: width * 4
-            )
+            if bytesPerRow == srcBytesPerRow {
+                memcpy(dest, baseAddress, width * height * 4)
+            } else {
+                let srcPtr = baseAddress.assumingMemoryBound(to: UInt8.self)
+                let destPtr = dest.assumingMemoryBound(to: UInt8.self)
+                for row in 0..<height {
+                    memcpy(
+                        destPtr.advanced(by: row * bytesPerRow),
+                        srcPtr.advanced(by: row * srcBytesPerRow),
+                        srcBytesPerRow
+                    )
+                }
+            }
         }
 
-        texture = newTexture
-        await MainActor.run {
-            self.mtkView?.needsDisplay = true
+        lock.withLock {
+            pendingPixelBuffer = createdBuffer
+            pendingTextureSize = CGSize(width: width, height: height)
         }
+    }
+
+    public func renderPixelBuffer(_ pixelBuffer: CVPixelBuffer) async throws {
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        try await renderPixelBuffer(pixelBuffer, width: width, height: height)
+    }
+
+    public func renderPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) async throws {
+        guard let textureCache = textureCache else {
+            throw NSError(domain: "VideoMetalRenderer", code: -3)
+        }
+
+        var cvTexture: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault,
+            textureCache,
+            pixelBuffer,
+            nil,
+            .bgra8Unorm,
+            width,
+            height,
+            0,
+            &cvTexture
+        )
+        guard status == kCVReturnSuccess, let cvTex = cvTexture else {
+            throw NSError(domain: "VideoMetalRenderer", code: Int(status))
+        }
+
+        lock.withLock {
+            pendingPixelBuffer = pixelBuffer
+            pendingTextureSize = CGSize(width: width, height: height)
+        }
+
+        _ = cvTex
     }
 
     public func startRendering() async throws {
         await MainActor.run {
             self.mtkView?.isPaused = false
-            self.mtkView?.enableSetNeedsDisplay = true
+            self.mtkView?.enableSetNeedsDisplay = false
         }
     }
 
@@ -141,22 +244,91 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     public func draw(in view: MTKView) {
+        inflightSemaphore.wait()
+
+        let (pixelBuffer, texSize) = lock.withLock {
+            (pendingPixelBuffer, pendingTextureSize)
+        }
+
+        guard let pixelBuffer = pixelBuffer,
+              let textureCache = textureCache else {
+            inflightSemaphore.signal()
+            return
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        var cvTexture: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault,
+            textureCache,
+            pixelBuffer,
+            nil,
+            .bgra8Unorm,
+            width,
+            height,
+            0,
+            &cvTexture
+        )
+
+        guard status == kCVReturnSuccess,
+              let cvTex = cvTexture,
+              let metalTexture = CVMetalTextureGetTexture(cvTex) else {
+            inflightSemaphore.signal()
+            return
+        }
+
         guard let drawable = view.currentDrawable,
               let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let commandBuffer = commandQueue?.makeCommandBuffer(),
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor),
-              let pipelineState = pipelineState else { return }
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            inflightSemaphore.signal()
+            return
+        }
+
+        commandBuffer.addCompletedHandler { [weak self] _ in
+            self?.inflightSemaphore.signal()
+        }
 
         renderEncoder.setRenderPipelineState(pipelineState)
 
-        if let currentTexture = texture {
-            renderEncoder.setFragmentTexture(currentTexture, index: 0)
-        }
+        let idx = inflightIndex
+        inflightIndex = (inflightIndex + 1) % kMaxInflightBuffers
 
+        let positions: [Float] = [
+            -1.0,  1.0,
+            -1.0, -1.0,
+             1.0,  1.0,
+             1.0, -1.0
+        ]
+        let texCoords: [Float] = [
+            0.0, 0.0,
+            0.0, 1.0,
+            1.0, 0.0,
+            1.0, 1.0
+        ]
+
+        vertexBuffers[idx].contents().copyMemory(from: positions, byteCount: MemoryLayout<Float>.size * 8)
+        texCoordBuffers[idx].contents().copyMemory(from: texCoords, byteCount: MemoryLayout<Float>.size * 8)
+
+        let viewSize = view.drawableSize
+        let uniforms: [Float] = [
+            Float(texSize.width), Float(texSize.height),
+            Float(viewSize.width), Float(viewSize.height)
+        ]
+        uniformBuffers[idx].contents().copyMemory(from: uniforms, byteCount: MemoryLayout<Float>.size * 4)
+
+        renderEncoder.setVertexBuffer(vertexBuffers[idx], offset: 0, index: 0)
+        renderEncoder.setVertexBuffer(texCoordBuffers[idx], offset: 0, index: 1)
+        renderEncoder.setFragmentTexture(metalTexture, index: 0)
+        renderEncoder.setFragmentBuffer(uniformBuffers[idx], offset: 0, index: 0)
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         renderEncoder.endEncoding()
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+
+        lastRenderTimestamp = Date.timeIntervalSinceReferenceDate
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import CoreVideo
 import VanguardDomain
 
 // MARK: - Video Encoder Service Protocol
@@ -15,6 +16,7 @@ public protocol VideoEncoderService: Sendable {
 public protocol VideoDecoderService: Sendable {
     func configure(codecConfiguration: Data) async throws
     func decodeFrame(_ frame: EncodedVideoFrame) async throws -> DecodedVideoFrame
+    func getLastDecodedPixelBuffer() async -> CVPixelBuffer?
     func reset() async
 }
 

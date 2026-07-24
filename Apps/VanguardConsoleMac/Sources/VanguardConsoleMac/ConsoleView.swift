@@ -3,6 +3,7 @@ import VanguardUI
 
 struct ConsoleView: View {
     @EnvironmentObject private var state: ConsoleAppState
+    @State private var selectedNode: ConsoleAppState.DiscoveredNode?
 
     var body: some View {
         CosmicBackground(baseColor: DS.Colors.info, particleCount: 35)
@@ -14,6 +15,7 @@ struct ConsoleView: View {
                 }
             )
             .frame(minWidth: 860, minHeight: 560)
+            .environment(\.themeProfile, state.currentTheme)
     }
 
     private var sidebar: some View {
@@ -22,6 +24,8 @@ struct ConsoleView: View {
                 .padding(DS.Spacing.lg)
             Divider().background(Color.white.opacity(0.04))
             nodeList
+            Divider().background(Color.white.opacity(0.04))
+            sidebarFooter
         }
         .frame(minWidth: 260, idealWidth: 300)
     }
@@ -50,6 +54,17 @@ struct ConsoleView: View {
                 Spacer()
             }
 
+            Picker("Theme", selection: Binding(
+                get: { state.currentTheme },
+                set: { state.setTheme($0) }
+            )) {
+                ForEach(ThemeProfile.allCases, id: \.self) { profile in
+                    Text(profile.displayName).tag(profile)
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+
             ElysiumButton(
                 title: state.isScanning ? "Stop" : "Scan LAN",
                 icon: state.isScanning ? "stop.fill" : "antenna.radiowaves.left.and.right",
@@ -71,9 +86,10 @@ struct ConsoleView: View {
                     emptyState
                 } else {
                     ForEach(Array(state.discoveredNodes.enumerated()), id: \.element.id) { index, node in
-                        NodeCard(node: node)
+                        NodeCard(node: node, isSelected: selectedNode?.id == node.id)
                             .progressiveReveal(delay: Double(index) * 0.05)
                             .onTapGesture {
+                                selectedNode = node
                                 Task { await state.connectToNode(node) }
                             }
                     }
@@ -106,6 +122,27 @@ struct ConsoleView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var sidebarFooter: some View {
+        VStack(spacing: DS.Spacing.sm) {
+            HStack(spacing: DS.Spacing.sm) {
+                Circle()
+                    .fill(state.isConnected ? DS.Colors.success : DS.Colors.textQuaternary)
+                    .frame(width: 6, height: 6)
+                Text(state.statusMessage)
+                    .font(DS.Typography.caption)
+                    .foregroundColor(DS.Colors.textQuaternary)
+                Spacer()
+            }
+            HStack(spacing: DS.Spacing.sm) {
+                Text("\(state.discoveredNodes.count) nodes")
+                    .font(DS.Typography.caption)
+                    .foregroundColor(DS.Colors.textQuaternary)
+                Spacer()
+            }
+        }
+        .padding(DS.Spacing.md)
     }
 
     @ViewBuilder
@@ -167,6 +204,9 @@ struct ConsoleView: View {
                 Text("Select a node from the sidebar")
                     .font(DS.Typography.subheadline)
                     .foregroundColor(DS.Colors.textSecondary)
+                Text("or click Scan to discover nodes on LAN")
+                    .font(DS.Typography.caption)
+                    .foregroundColor(DS.Colors.textQuaternary)
             }
             Spacer()
         }
@@ -175,6 +215,7 @@ struct ConsoleView: View {
 
 struct NodeCard: View {
     let node: ConsoleAppState.DiscoveredNode
+    let isSelected: Bool
     @State private var isHovered = false
 
     var body: some View {
@@ -198,11 +239,12 @@ struct NodeCard: View {
             }
         }
         .padding(DS.Spacing.md)
-        .glass(style: .ultraThin, cornerRadius: DS.Radius.lg)
-        .adaptiveBorder(highlighted: isHovered)
+        .glass(style: isSelected ? .colored(DS.Colors.accent) : .ultraThin, cornerRadius: DS.Radius.lg)
+        .adaptiveBorder(highlighted: isHovered || isSelected)
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .onHover { isHovered = $0 }
         .animation(DS.Animation.springFast, value: isHovered)
+        .animation(DS.Animation.springFast, value: isSelected)
     }
 }
 
@@ -212,6 +254,7 @@ struct PairingCodeView: View {
     @EnvironmentObject private var state: ConsoleAppState
     @State private var enteredCode = ""
     @State private var submitError: String?
+    @State private var isSubmitting = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -278,16 +321,21 @@ struct PairingCodeView: View {
             Spacer().frame(height: DS.Spacing.xl)
 
             ElysiumButton(
-                title: "Submit Code",
-                icon: "lock.open.fill",
+                title: isSubmitting ? "Submitting..." : "Submit Code",
+                icon: isSubmitting ? "arrow.triangle.2.circlepath" : "lock.open.fill",
                 color: DS.Colors.warning
             ) {
+                isSubmitting = true
                 Task {
-                    do { try await state.submitPairingCode(enteredCode) }
-                    catch { submitError = error.localizedDescription }
+                    do {
+                        try await state.submitPairingCode(enteredCode)
+                    } catch {
+                        submitError = error.localizedDescription
+                    }
+                    isSubmitting = false
                 }
             }
-            .disabled(enteredCode.count != 6)
+            .disabled(enteredCode.count != 6 || isSubmitting)
             .opacity(enteredCode.count == 6 ? 1.0 : 0.4)
 
             Spacer()

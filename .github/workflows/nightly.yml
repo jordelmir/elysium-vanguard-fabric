@@ -20,11 +20,17 @@ jobs:
       - name: Build
         run: swift build 2>&1
 
+      - name: Test
+        run: swift test --parallel 2>&1
+
       - name: Test with Thread Sanitizer
         run: swift test --parallel --sanitize=thread 2>&1 || true
 
       - name: Test with Address Sanitizer
         run: swift test --parallel --sanitize=address 2>&1 || true
+
+      - name: Test with Undefined Behavior Sanitizer
+        run: swift test --parallel --sanitize=undefined 2>&1 || true
 
       - name: Secret Scan
         run: |
@@ -42,3 +48,7 @@ jobs:
           echo "Date: $(date)"
           echo "Swift: $(swift --version 2>&1 | head -1)"
           echo "Commit: $(git rev-parse HEAD)"
+          echo "=== Package Count ==="
+          ls Packages/ | wc -l
+          echo "=== Test Count ==="
+          swift test 2>&1 | grep "Executed" | awk '{s+=$2} END {print s " total tests"}'

@@ -4,6 +4,7 @@ import VanguardUI
 struct ContentView: View {
     @EnvironmentObject private var state: NodeAppState
     @State private var showPairingSheet = false
+    @State private var animateGlow = false
 
     var body: some View {
         CosmicBackground(baseColor: DS.Colors.accent, particleCount: 40)
@@ -28,12 +29,17 @@ struct ContentView: View {
 
                     Spacer()
 
+                    telemetrySection
+                        .padding(.horizontal, DS.Spacing.xxl)
+                        .padding(.bottom, DS.Spacing.lg)
+
                     controlsSection
                         .padding(.horizontal, DS.Spacing.xxl)
                         .padding(.bottom, DS.Spacing.xxl)
                 }
-                .frame(width: 420, height: 400)
+                .frame(width: 420, height: 480)
             )
+            .environment(\.themeProfile, state.currentTheme)
             .sheet(isPresented: $showPairingSheet) {
                 if let pairing = state.pendingPairingRequest {
                     PairingView(
@@ -46,6 +52,11 @@ struct ContentView: View {
             .onChange(of: state.pendingPairingRequest) { req in
                 if req != nil { showPairingSheet = true }
             }
+            .onAppear {
+                withAnimation(.easeInOut(duration: 2).repeatForever()) {
+                    animateGlow = true
+                }
+            }
     }
 
     private var header: some View {
@@ -53,7 +64,7 @@ struct ContentView: View {
             HStack(spacing: DS.Spacing.md) {
                 ZStack {
                     Circle()
-                        .fill(DS.Colors.accent.opacity(0.08))
+                        .fill(DS.Colors.accent.opacity(animateGlow ? 0.12 : 0.08))
                         .frame(width: 44, height: 44)
                     Image(systemName: "shield.fill")
                         .font(.system(size: 18, weight: .bold))
@@ -100,6 +111,10 @@ struct ContentView: View {
                         .font(DS.Typography.mono)
                         .foregroundColor(DS.Colors.accent)
                     Spacer()
+                    Circle()
+                        .fill(DS.Colors.success)
+                        .frame(width: 6, height: 6)
+                        .pulsing(DS.Colors.success)
                 }
                 .padding(DS.Spacing.lg)
                 .glass(style: .colored(DS.Colors.accent), cornerRadius: DS.Radius.lg)
@@ -121,10 +136,44 @@ struct ContentView: View {
                     .foregroundColor(DS.Colors.textSecondary)
             }
             Spacer()
+            ElysiumButton(title: "Open", icon: "gear", color: DS.Colors.warning, style: .bordered) {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
         }
         .padding(DS.Spacing.lg)
         .glass(style: .thin, cornerRadius: DS.Radius.lg)
         .innerGlow(DS.Colors.warning, radius: 60)
+    }
+
+    private var telemetrySection: some View {
+        VStack(spacing: DS.Spacing.sm) {
+            if let stats = state.pipelineStats {
+                HStack(spacing: DS.Spacing.lg) {
+                    TelemetryItem(
+                        icon: "arrow.down.circle",
+                        label: "Rendered",
+                        value: "\(stats.framesRendered)",
+                        color: DS.Colors.success
+                    )
+                    TelemetryItem(
+                        icon: "arrow.up.circle",
+                        label: "Encoded",
+                        value: "\(stats.framesEncoded)",
+                        color: DS.Colors.accent
+                    )
+                    TelemetryItem(
+                        icon: "clock",
+                        label: "Latency",
+                        value: String(format: "%.0fms", stats.averageRenderLatencyMs),
+                        color: DS.Colors.info
+                    )
+                }
+                .padding(DS.Spacing.md)
+                .glass(style: .ultraThin, cornerRadius: DS.Radius.lg)
+            }
+        }
     }
 
     private var controlsSection: some View {
@@ -150,6 +199,30 @@ struct ContentView: View {
                 Task { await state.checkPermissions() }
             }
         }
+    }
+}
+
+struct TelemetryItem: View {
+    let icon: String
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: DS.Spacing.xs) {
+            HStack(spacing: DS.Spacing.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                    .foregroundColor(color)
+                Text(label)
+                    .font(DS.Typography.caption)
+                    .foregroundColor(DS.Colors.textQuaternary)
+            }
+            Text(value)
+                .font(DS.Typography.monoBold)
+                .foregroundColor(color)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

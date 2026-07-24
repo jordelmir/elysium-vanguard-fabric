@@ -20,6 +20,9 @@ let package = Package(
         .library(name: "VanguardVideo", targets: ["VanguardVideo"]),
         .library(name: "VanguardInput", targets: ["VanguardInput"]),
         .library(name: "VanguardTerminal", targets: ["VanguardTerminal"]),
+        .library(name: "VanguardClipboard", targets: ["VanguardClipboard"]),
+        .library(name: "VanguardFiles", targets: ["VanguardFiles"]),
+        .library(name: "VanguardAudio", targets: ["VanguardAudio"]),
         .library(name: "VanguardProcesses", targets: ["VanguardProcesses"]),
         .library(name: "VanguardTelemetry", targets: ["VanguardTelemetry"]),
         .library(name: "VanguardAudit", targets: ["VanguardAudit"]),
@@ -56,7 +59,7 @@ let package = Package(
         ),
         .target(
             name: "VanguardSecurity",
-            dependencies: ["VanguardDomain"],
+            dependencies: ["VanguardDomain", "VanguardIdentity", "VanguardProtocol"],
             path: "Packages/VanguardSecurity/Sources/VanguardSecurity"
         ),
         .target(
@@ -83,6 +86,24 @@ let package = Package(
             name: "VanguardTerminal",
             dependencies: ["VanguardDomain"],
             path: "Packages/VanguardTerminal/Sources/VanguardTerminal"
+        ),
+        .target(
+            name: "VanguardClipboard",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardClipboard/Sources/VanguardClipboard"
+        ),
+        .target(
+            name: "VanguardFiles",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardFiles/Sources/VanguardFiles"
+        ),
+        .target(
+            name: "VanguardAudio",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardAudio/Sources/VanguardAudio",
+            linkerSettings: [
+                .linkedFramework("AVFoundation"),
+            ]
         ),
         .target(
             name: "VanguardProcesses",
@@ -134,6 +155,9 @@ let package = Package(
                 "VanguardVideo",
                 "VanguardInput",
                 "VanguardTerminal",
+                "VanguardRender",
+                "VanguardSecurity",
+                "VanguardAudit",
             ],
             path: "Packages/VanguardSession/Sources/VanguardSession"
         ),
@@ -252,6 +276,10 @@ let package = Package(
                 "VanguardInput",
                 "VanguardTerminal",
                 "VanguardUI",
+                "VanguardClipboard",
+                "VanguardSecurity",
+                "VanguardAudit",
+                "VanguardTelemetry",
             ],
             path: "Apps/VanguardNodeMac/Sources/VanguardNodeMac",
             linkerSettings: [
@@ -276,6 +304,9 @@ let package = Package(
                 "VanguardTerminal",
                 "VanguardRender",
                 "VanguardUI",
+                "VanguardClipboard",
+                "VanguardSecurity",
+                "VanguardAudit",
             ],
             path: "Apps/VanguardConsoleMac/Sources/VanguardConsoleMac",
             linkerSettings: [

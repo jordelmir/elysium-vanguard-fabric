@@ -94,6 +94,8 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             throw DecoderError.invalidFrameData
         }
 
+        await state.setLastDecodedPixelBuffer(outputBuffer)
+
         let width = CVPixelBufferGetWidth(outputBuffer)
         let height = CVPixelBufferGetHeight(outputBuffer)
 
@@ -110,6 +112,11 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             await state.setSession(nil)
         }
         await state.setFormatDescription(nil)
+        await state.setLastDecodedPixelBuffer(nil)
+    }
+
+    public func getLastDecodedPixelBuffer() async -> CVPixelBuffer? {
+        await state.getLastDecodedPixelBuffer()
     }
 
     private func createFormatDescription(from configData: Data) throws -> CMVideoFormatDescription {
@@ -232,6 +239,7 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
 private final class DecoderState: @unchecked Sendable {
     private var session: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
+    private var lastDecodedPixelBuffer: CVPixelBuffer?
     private let lock = NSLock()
 
     func getSession() -> VTDecompressionSession? {
@@ -248,6 +256,14 @@ private final class DecoderState: @unchecked Sendable {
 
     func setFormatDescription(_ description: CMVideoFormatDescription?) {
         lock.withLock { self.formatDescription = description }
+    }
+
+    func getLastDecodedPixelBuffer() -> CVPixelBuffer? {
+        lock.withLock { lastDecodedPixelBuffer }
+    }
+
+    func setLastDecodedPixelBuffer(_ buffer: CVPixelBuffer?) {
+        lock.withLock { self.lastDecodedPixelBuffer = buffer }
     }
 }
 

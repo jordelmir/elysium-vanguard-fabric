@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import CoreVideo
 @testable import VanguardSession
 @testable import VanguardDomain
 @testable import VanguardProtocol
@@ -59,13 +60,15 @@ final class SessionCoordinatorTests: XCTestCase {
         let identityService = MockIdentityService()
         let permissionService = MockPermissionService()
         let terminalService = MockTerminalService()
+        let decoderService = MockDecoderService()
 
         let coordinator = ConsoleSessionCoordinator(
             discoveryService: discoveryService,
             transport: transport,
             identityService: identityService,
             permissionService: permissionService,
-            terminalService: terminalService
+            terminalService: terminalService,
+            decoderService: decoderService
         )
 
         let collector = StateCollector<ConsoleSessionCoordinator.ConsoleState>()
@@ -212,4 +215,13 @@ private final class MockTerminalService: TerminalService, @unchecked Sendable {
     func getOutput(sessionID: TerminalSessionID, fromOffset: UInt64) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { $0.finish() }
     }
+}
+
+private final class MockDecoderService: VideoDecoderService, @unchecked Sendable {
+    func configure(codecConfiguration: Data) async throws {}
+    func decodeFrame(_ frame: EncodedVideoFrame) async throws -> DecodedVideoFrame {
+        DecodedVideoFrame(frameID: frame.frameID, width: 1920, height: 1080)
+    }
+    func getLastDecodedPixelBuffer() async -> CVPixelBuffer? { nil }
+    func reset() async {}
 }

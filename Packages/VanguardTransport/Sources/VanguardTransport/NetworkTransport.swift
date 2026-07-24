@@ -16,6 +16,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     private var _receiveTask: Task<Void, Never>?
     private var _sendTask: Task<Void, Never>?
     private var _isRunning = false
+    private var connectionStartTime: CFAbsoluteTime?
 
     let frameDecoder = FrameDecoder()
     let multiplexer = ChannelMultiplexer()
@@ -60,6 +61,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         self.useTLS = useTLS
         self.heartbeatInterval = heartbeatInterval
         self.state = IncomingMessageState()
+        AppLogger.logTransport("Transport initialized", host: host, port: port)
     }
 
     public var incomingMessages: AsyncThrowingStream<InboundMessage, Error> {
@@ -77,12 +79,17 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     }
 
     public func connect(to endpoint: NodeEndpoint) async throws {
+        AppLogger.logTransport("Connecting to peer", host: endpoint.host, port: endpoint.port)
+        connectionStartTime = CFAbsoluteTimeGetCurrent()
+
         let parameters: NWParameters
         if useTLS {
             let tlsOptions = NWProtocolTLS.Options()
             parameters = NWParameters(tls: tlsOptions)
+            AppLogger.logTransport("Using TLS 1.3", host: endpoint.host, port: endpoint.port)
         } else {
             parameters = NWParameters.tcp
+            AppLogger.logTransport("Using plain TCP", host: endpoint.host, port: endpoint.port)
         }
 
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else {
@@ -105,9 +112,14 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
                 case .ready:
                     settledFlag.set()
                     continuation.resume()
-                case .failed:
+                case .failed(let error):
                     settledFlag.set()
+                    AppLogger.error(.transport, "Connection failed: \(error.localizedDescription)")
                     continuation.resume()
+                case .waiting(let error):
+                    AppLogger.warning(.transport, "Connection waiting: \(error.localizedDescription)")
+                case .cancelled:
+                    AppLogger.warning(.transport, "Connection cancelled")
                 default:
                     break
                 }
@@ -119,6 +131,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
                 if !settledFlag.get() {
                     settledFlag.set()
                     newConnection.cancel()
+                    AppLogger.error(.transport, "Connection timed out after 10s")
                     continuation.resume()
                 }
             }
@@ -127,6 +140,9 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         guard newConnection.state == .ready else {
             throw TransportError.connectFailed
         }
+
+        let connectTime = CFAbsoluteTimeGetCurrent() - (connectionStartTime ?? 0)
+        AppLogger.logPerformance("Transport.connect", durationMs: connectTime * 1000)
 
         isRunning = true
         frameDecoder.reset()
@@ -137,6 +153,8 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         receiveTask = Task { await startReceiving() }
         sendTask = Task { await startSendLoop() }
         await startHeartbeat()
+
+        AppLogger.logTransport("Connection established", host: endpoint.host, port: endpoint.port)
     }
 
     public func send(_ message: OutboundMessage) async throws {
@@ -158,6 +176,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
     }
 
     public func disconnect(reason: DisconnectReason) async {
+        AppLogger.logTransport("Disconnecting", host: host, port: port)
         isRunning = false
         receiveTask?.cancel()
         receiveTask = nil
@@ -170,9 +189,12 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         multiplexer.clearAll()
         flowController.reset()
         heartbeatController.reset()
+        AppLogger.logTransport("Disconnected", host: host, port: port)
     }
 
     public func listen(port: UInt16) async throws {
+        AppLogger.logTransport("Starting listener", host: "0.0.0.0", port: port)
+
         let parameters: NWParameters
         if useTLS {
             let tlsOptions = NWProtocolTLS.Options()
@@ -189,6 +211,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
 
         newListener.newConnectionHandler = { [weak self] newConnection in
             guard let self else { return }
+            AppLogger.logTransport("Incoming connection from peer", host: "peer", port: port)
             self.connection = newConnection
             self.isRunning = true
             self.frameDecoder.reset()
@@ -201,6 +224,7 @@ public final class NetworkTransport: VanguardTransport, @unchecked Sendable {
         }
 
         newListener.start(queue: .global(qos: .userInitiated))
+        AppLogger.logTransport("Listener started", host: "0.0.0.0", port: port)
     }
 
     private func startReceiving() async {

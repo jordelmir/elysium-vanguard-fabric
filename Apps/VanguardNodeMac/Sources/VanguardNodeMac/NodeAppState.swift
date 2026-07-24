@@ -11,6 +11,11 @@ import VanguardVideo
 import VanguardInput
 import VanguardTerminal
 import VanguardSession
+import VanguardClipboard
+import VanguardSecurity
+import VanguardAudit
+import VanguardTelemetry
+import VanguardUI
 
 @MainActor
 public final class NodeAppState: ObservableObject {
@@ -20,8 +25,14 @@ public final class NodeAppState: ObservableObject {
     @Published public var connectedConsole: String?
     @Published public var statusMessage = "Stopped"
     @Published public var pendingPairingRequest: PairingRequest?
+    @Published public var currentTheme: ThemeProfile = .balanced
+    @Published public var pipelineStats: PipelineStats?
 
     private var coordinator: NodeSessionCoordinator?
+    private let clipboardService = ClipboardService()
+    private var identityService: CryptoKitIdentityService?
+    private var auditService: AuditIntegrationService?
+    private var telemetryTask: Task<Void, Never>?
 
     public struct PairingRequest: Identifiable, Equatable {
         public let id = UUID()
@@ -61,13 +72,24 @@ public final class NodeAppState: ObservableObject {
     public func startNode() async {
         guard permissions == .authorized else {
             statusMessage = "Missing permissions"
+            AppLogger.error(.permissions, "Cannot start node: permissions not authorized")
             return
         }
 
+        AppLogger.info(.node, "Starting node...")
+        statusMessage = "Starting..."
+
         do {
             let discoveryService = BonjourDiscoveryService()
-            let transport = NetworkTransport(host: "0.0.0.0", port: 49494, useTLS: false)
             let identityService = CryptoKitIdentityService()
+            self.identityService = identityService
+
+            let auditLog = InMemoryAuditLogService()
+            let auditService = AuditIntegrationService(auditLog: auditLog)
+            self.auditService = auditService
+            await auditService.startAutoFlush()
+
+            let transport = NetworkTransport(host: "0.0.0.0", port: 49494, useTLS: true)
             let permissionService = MacOSPermissionService()
             let captureService = ScreenCaptureKitCaptureService()
             let encoderService = VideoToolboxEncoder()
@@ -88,19 +110,34 @@ public final class NodeAppState: ObservableObject {
             try await coordinator?.start()
             isRunning = true
             statusMessage = "Advertising on LAN..."
+            AppLogger.info(.node, "Node started successfully")
+
+            await clipboardService.startWatching()
+            AppLogger.info(.clipboard, "Clipboard watching started")
 
             Task { await observeCoordinatorState() }
+            startTelemetryPolling()
         } catch {
             statusMessage = "Failed to start: \(error.localizedDescription)"
+            AppLogger.error(.node, "Failed to start node: \(error.localizedDescription)")
         }
     }
 
     public func stopNode() async {
+        AppLogger.info(.node, "Stopping node...")
         await coordinator?.stop()
+        await clipboardService.stopWatching()
+        await auditService?.stopAutoFlush()
+        telemetryTask?.cancel()
+        telemetryTask = nil
         coordinator = nil
+        identityService = nil
+        auditService = nil
         isRunning = false
         connectedConsole = nil
+        pipelineStats = nil
         statusMessage = "Stopped"
+        AppLogger.info(.node, "Node stopped")
     }
 
     public func approvePairing() async {
@@ -108,6 +145,15 @@ public final class NodeAppState: ObservableObject {
         do {
             try await coordinator?.approvePairing()
             pendingPairingRequest = nil
+            if let audit = auditService, let identity = identityService {
+                let localIdentity = try await identity.getOrCreateIdentity()
+                await audit.logSecurityEvent(
+                    actorNodeID: localIdentity.nodeID,
+                    targetNodeID: localIdentity.nodeID,
+                    sessionID: nil,
+                    action: .pairingCompleted
+                )
+            }
         } catch {
             statusMessage = "Pairing failed: \(error.localizedDescription)"
         }
@@ -138,5 +184,20 @@ public final class NodeAppState: ObservableObject {
                 statusMessage = "Error: \(msg)"
             }
         }
+    }
+
+    private func startTelemetryPolling() {
+        telemetryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled else { break }
+                await self?.refreshTelemetry()
+            }
+        }
+    }
+
+    private func refreshTelemetry() async {
+        guard let stats = await coordinator?.pipelineStats else { return }
+        pipelineStats = stats
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import os
+import CoreVideo
 import VanguardDomain
 import VanguardProtocol
 import VanguardTransport
@@ -10,6 +11,7 @@ import VanguardCapture
 import VanguardVideo
 import VanguardInput
 import VanguardTerminal
+import VanguardAudit
 
 // MARK: - Node Session Coordinator
 
@@ -29,6 +31,9 @@ public actor NodeSessionCoordinator {
     private var stateContinuation: AsyncStream<NodeState>.Continuation?
     private var currentChallengeCode: String?
     private var consoleNodeID: NodeID?
+    private var auditService: AuditIntegrationService?
+    private var isCapturing = false
+    private var captureTask: Task<Void, Never>?
 
     public struct NodeSession {
         public let sessionID: SessionID
@@ -64,6 +69,20 @@ public actor NodeSessionCoordinator {
         }
     }
 
+    private var _pipelineStats = PipelineStats(
+        framesCaptured: 0,
+        framesEncoded: 0,
+        framesDecoded: 0,
+        framesRendered: 0,
+        averageEncodeTimeMs: 0,
+        averageDecodeTimeMs: 0,
+        averageRenderLatencyMs: 0,
+        currentBitrate: 0
+    )
+    public var pipelineStats: PipelineStats? {
+        _pipelineStats
+    }
+
     public init(
         discoveryService: any DiscoveryService,
         transport: any VanguardTransport,
@@ -82,6 +101,10 @@ public actor NodeSessionCoordinator {
         self.encoderService = encoderService
         self.inputService = inputService
         self.terminalService = terminalService
+    }
+
+    public func setAuditService(_ service: AuditIntegrationService) {
+        self.auditService = service
     }
 
     public func start() async throws {
@@ -108,19 +131,31 @@ public actor NodeSessionCoordinator {
             endpoint: NodeEndpoint(host: hostname, port: 49494)
         )
 
+        AppLogger.info(.node, "Starting node: \(hostname) (\(arch.rawValue))")
+        AppLogger.info(.node, "Node ID: \(nodeID.rawValue.uuidString.prefix(8))")
+
         try await discoveryService.publishAdvertisement(advertisement)
+        AppLogger.info(.node, "Advertisement published via Bonjour")
+
         try await transport.listen(port: 49494)
+        AppLogger.info(.node, "Listening on port 49494")
+
         Task { await listenForMessages() }
     }
 
     public func stop() async {
+        AppLogger.info(.node, "Stopping node")
+        stopCapture()
         await discoveryService.unpublish()
         await transport.disconnect(reason: .userInitiated)
         updateState(.idle)
+        AppLogger.info(.node, "Node stopped")
     }
 
     public func approvePairing() async throws {
         guard let code = currentChallengeCode, let consoleID = consoleNodeID else { return }
+
+        AppLogger.info(.pairing, "Approving pairing with console: \(consoleID.rawValue.uuidString.prefix(8))")
 
         let identity = try await identityService.getOrCreateIdentity()
         let completePayload = PairingCompletePayload(
@@ -132,7 +167,101 @@ public actor NodeSessionCoordinator {
         let message = OutboundMessage(messageType: .pairingComplete, payload: data)
         try await transport.send(message)
 
-        updateState(.connected(consoleID))
+        updateState(.capturing)
+        AppLogger.info(.pairing, "Pairing approved and complete — starting video capture")
+        await startCaptureLoop()
+    }
+
+    private func startCaptureLoop() async {
+        guard !isCapturing else { return }
+        isCapturing = true
+
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let sources = try await self.captureService.availableSources()
+                guard let source = sources.first else {
+                    AppLogger.error(.capture, "No display source available")
+                    await self.updateState(.error("No display available"))
+                    return
+                }
+
+                let config = CaptureConfiguration(maxWidth: 1920, maxHeight: 1080, fps: 30)
+                let frameStream = try await self.captureService.startCapture(source: source, configuration: config)
+                AppLogger.info(.capture, "Screen capture started on \(source.name)")
+
+                let encoderWidth = 1920
+                let encoderHeight = 1080
+                try await self.encoderService.configure(width: encoderWidth, height: encoderHeight, fps: 30, bitrate: 8_000_000)
+                AppLogger.info(.capture, "Encoder configured: \(encoderWidth)x\(encoderHeight)@30fps, 8Mbps")
+
+                var frameCount: UInt64 = 0
+
+                for try await frameData in frameStream {
+                    guard !Task.isCancelled else { break }
+
+                    frameCount += 1
+                    let startEncode = Date()
+
+                    if let encodedFrame = try? await self.encoderService.encodeFrame(frameData, width: encoderWidth, height: encoderHeight) {
+                        let encodeTime = Date().timeIntervalSince(startEncode) * 1000
+
+                        let framePayload = VideoFramePayload(
+                            frameID: encodedFrame.frameID,
+                            presentationTimestampNanos: encodedFrame.presentationTimestampNanos,
+                            isKeyframe: encodedFrame.isKeyframe,
+                            codecConfigurationRevision: encodedFrame.codecConfigurationRevision,
+                            payload: encodedFrame.payload
+                        )
+                        let payloadData = try JSONEncoder().encode(framePayload)
+                        let message = OutboundMessage(messageType: .videoFrame, payload: payloadData)
+                        try? await self.transport.send(message)
+
+                        await self.updatePipelineStats(
+                            framesCaptured: frameCount,
+                            framesEncoded: frameCount,
+                            encodeTimeMs: encodeTime
+                        )
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.error(.capture, "Capture stream ended: \(error.localizedDescription)")
+                }
+            }
+
+            await self.setCapturing(false)
+            AppLogger.info(.capture, "Capture loop exited")
+        }
+    }
+
+    private func updatePipelineStats(framesCaptured: UInt64, framesEncoded: UInt64, encodeTimeMs: Double) {
+        _pipelineStats = PipelineStats(
+            framesCaptured: framesCaptured,
+            framesEncoded: framesEncoded,
+            framesDecoded: 0,
+            framesRendered: 0,
+            averageEncodeTimeMs: encodeTimeMs,
+            averageDecodeTimeMs: 0,
+            averageRenderLatencyMs: 0,
+            currentBitrate: 8_000_000
+        )
+    }
+
+    private func setCapturing(_ value: Bool) {
+        isCapturing = value
+    }
+
+    public func stopCapture() {
+        captureTask?.cancel()
+        captureTask = nil
+        isCapturing = false
+        Task {
+            await captureService.stopCapture()
+            await encoderService.reset()
+        }
+        AppLogger.info(.capture, "Capture stopped")
     }
 
     public func handleInputEvent(_ event: RemoteInputEvent) async throws {
@@ -212,6 +341,9 @@ public actor NodeSessionCoordinator {
             } catch {
                 os_log(.error, "Failed to send heartbeat ack: %{public}@", error.localizedDescription)
             }
+        case .videoKeyframeRequest:
+            AppLogger.info(.capture, "Console requested keyframe")
+            Task { await encoderService.requestKeyframe() }
         default:
             break
         }
@@ -289,6 +421,7 @@ public actor ConsoleSessionCoordinator {
     private let identityService: any IdentityService
     private let permissionService: any PermissionService
     private let terminalService: any TerminalService
+    private let decoderService: any VideoDecoderService
 
     private var currentState: ConsoleState = .idle
     private var currentSession: ConsoleSession?
@@ -297,6 +430,7 @@ public actor ConsoleSessionCoordinator {
     private var frameContinuation: AsyncThrowingStream<Data, Error>.Continuation?
     private var terminalContinuation: AsyncStream<TerminalOutputPayload>.Continuation?
     private var pendingChallengeCode: String?
+    private var isDecoderConfigured = false
 
     public struct ConsoleSession {
         public let sessionID: SessionID
@@ -359,13 +493,15 @@ public actor ConsoleSessionCoordinator {
         transport: any VanguardTransport,
         identityService: any IdentityService,
         permissionService: any PermissionService,
-        terminalService: any TerminalService
+        terminalService: any TerminalService,
+        decoderService: any VideoDecoderService
     ) {
         self.discoveryService = discoveryService
         self.transport = transport
         self.identityService = identityService
         self.permissionService = permissionService
         self.terminalService = terminalService
+        self.decoderService = decoderService
     }
 
     public func startScan() async throws {
@@ -395,6 +531,7 @@ public actor ConsoleSessionCoordinator {
 
     public func connect(to node: NodeAdvertisement) async throws {
         updateState(.connecting(node))
+        AppLogger.info(.session, "Connecting to node: \(node.displayName)")
 
         let endpoint = node.endpoint
         try await transport.connect(to: endpoint)
@@ -427,13 +564,24 @@ public actor ConsoleSessionCoordinator {
         let message = OutboundMessage(messageType: .hello, payload: data)
         try await transport.send(message)
 
+        AppLogger.info(.session, "Hello message sent to \(node.displayName)")
+
         Task { await listenForMessages() }
     }
 
     public func disconnect() async {
+        AppLogger.info(.session, "Disconnecting from node")
         await transport.disconnect(reason: .userInitiated)
         currentSession = nil
+        isDecoderConfigured = false
         updateState(.idle)
+        AppLogger.info(.session, "Disconnected")
+    }
+
+    public func requestKeyframe() async throws {
+        let message = OutboundMessage(messageType: .videoKeyframeRequest, payload: Data())
+        try await transport.send(message)
+        AppLogger.info(.session, "Keyframe requested from node")
     }
 
     public func submitPairingCode(_ code: String) async throws {
@@ -509,7 +657,41 @@ public actor ConsoleSessionCoordinator {
         case .videoFrame:
             do {
                 let frame = try JSONDecoder().decode(VideoFramePayload.self, from: message.payload)
-                frameContinuation?.yield(frame.payload)
+
+                let encodedFrame = EncodedVideoFrame(
+                    frameID: frame.frameID,
+                    presentationTimestampNanos: frame.presentationTimestampNanos,
+                    isKeyframe: frame.isKeyframe,
+                    codecConfigurationRevision: frame.codecConfigurationRevision,
+                    payload: frame.payload
+                )
+
+                if !isDecoderConfigured {
+                    do {
+                        try await decoderService.configure(codecConfiguration: frame.payload)
+                        isDecoderConfigured = true
+                        AppLogger.info(.session, "Decoder configured from first frame")
+                    } catch {
+                        AppLogger.warning(.session, "Decoder config from frame failed, trying decode anyway: \(error.localizedDescription)")
+                    }
+                }
+
+                _ = try? await decoderService.decodeFrame(encodedFrame)
+
+                if let pixelBuffer = await decoderService.getLastDecodedPixelBuffer() {
+                    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+                    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+                    if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
+                        let width = CVPixelBufferGetWidth(pixelBuffer)
+                        let height = CVPixelBufferGetHeight(pixelBuffer)
+                        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                        let data = Data(bytes: baseAddress, count: height * bytesPerRow)
+                        frameContinuation?.yield(data)
+                    }
+                } else {
+                    frameContinuation?.yield(frame.payload)
+                }
             } catch {
                 os_log(.error, "Failed to decode video frame: %{public}@", error.localizedDescription)
             }
@@ -552,7 +734,8 @@ public actor ConsoleSessionCoordinator {
     private func handlePairingComplete(_ message: InboundMessage) async {
         pendingChallengeCode = nil
         if let nodeID = currentSession?.nodeID {
-            updateState(.connected(nodeID))
+            updateState(.capturing)
+            AppLogger.info(.session, "Pairing complete — ready to receive video frames")
         }
     }
 

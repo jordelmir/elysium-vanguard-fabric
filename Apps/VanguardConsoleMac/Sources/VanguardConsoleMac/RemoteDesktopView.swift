@@ -5,11 +5,13 @@ import VanguardDomain
 import VanguardProtocol
 import VanguardInput
 import VanguardRender
+import VanguardSession
 
 struct RemoteDesktopView: View {
     let nodeName: String
     @StateObject private var renderer = RemoteDesktopState()
     @EnvironmentObject private var consoleState: ConsoleAppState
+    @State private var isFullscreen = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +23,9 @@ struct RemoteDesktopView: View {
         }
         .task { await renderer.startReceiving(consoleState: consoleState) }
         .onDisappear { Task { await renderer.stop() } }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            renderer.isConnected = true
+        }
     }
 
     private var toolbar: some View {
@@ -34,20 +39,40 @@ struct RemoteDesktopView: View {
             }
             Spacer()
             if renderer.showFPS {
-                HStack(spacing: DS.Spacing.xs) {
-                    Text("\(renderer.fps)")
-                        .font(DS.Typography.monoBold)
-                        .foregroundColor(DS.Colors.success)
-                    Text("FPS")
-                        .font(DS.Typography.caption)
-                        .foregroundColor(DS.Colors.textQuaternary)
-                    Text("·").foregroundColor(DS.Colors.textQuaternary)
-                    Text("\(renderer.latency, specifier: "%.0f")")
-                        .font(DS.Typography.monoBold)
-                        .foregroundColor(DS.Colors.accent)
-                    Text("ms")
-                        .font(DS.Typography.caption)
-                        .foregroundColor(DS.Colors.textQuaternary)
+                HStack(spacing: DS.Spacing.sm) {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        HStack(spacing: DS.Spacing.xs) {
+                            Text("\(renderer.fps)")
+                                .font(DS.Typography.monoBold)
+                                .foregroundColor(renderer.fps >= 30 ? DS.Colors.success : DS.Colors.warning)
+                            Text("FPS")
+                                .font(DS.Typography.caption)
+                                .foregroundColor(DS.Colors.textQuaternary)
+                        }
+                        HStack(spacing: DS.Spacing.xs) {
+                            Text("\(renderer.latency, specifier: "%.0f")")
+                                .font(DS.Typography.monoBold)
+                                .foregroundColor(renderer.latency < 50 ? DS.Colors.success : DS.Colors.warning)
+                            Text("ms")
+                                .font(DS.Typography.caption)
+                                .foregroundColor(DS.Colors.textQuaternary)
+                        }
+                    }
+                    if let stats = renderer.pipelineStats {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            HStack(spacing: DS.Spacing.xs) {
+                                Text("↑\(stats.framesEncoded)")
+                                    .font(DS.Typography.caption)
+                                    .foregroundColor(DS.Colors.accent)
+                                Text("↓\(stats.framesDecoded)")
+                                    .font(DS.Typography.caption)
+                                    .foregroundColor(DS.Colors.success)
+                            }
+                            Text("\(stats.currentBitrate / 1_000_000)Mbps")
+                                .font(DS.Typography.caption)
+                                .foregroundColor(DS.Colors.textQuaternary)
+                        }
+                    }
                 }
                 .padding(.horizontal, DS.Spacing.md)
                 .padding(.vertical, DS.Spacing.xs)
@@ -66,6 +91,8 @@ struct RemoteDesktopView: View {
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.1), value: renderer.currentImage)
             } else {
                 VStack(spacing: DS.Spacing.lg) {
                     ZStack {
@@ -80,6 +107,9 @@ struct RemoteDesktopView: View {
                         .font(DS.Typography.micro)
                         .foregroundColor(DS.Colors.textQuaternary)
                         .tracking(3)
+                    Text("Connect to a node to start receiving video")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textQuaternary)
                 }
             }
 
@@ -138,6 +168,17 @@ struct RemoteDesktopView: View {
 
             Spacer()
 
+            if renderer.isConnected {
+                HStack(spacing: DS.Spacing.xs) {
+                    Circle()
+                        .fill(DS.Colors.success)
+                        .frame(width: 6, height: 6)
+                    Text("Connected")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.success)
+                }
+            }
+
             ElysiumButton(title: "Disconnect", icon: "xmark.circle.fill", color: DS.Colors.error, style: .bordered) {
                 Task { await consoleState.disconnect() }
             }
@@ -156,6 +197,8 @@ final class RemoteDesktopState: ObservableObject {
     @Published var showCrosshair = false
     @Published var cursorX: CGFloat = 0
     @Published var cursorY: CGFloat = 0
+    @Published var isConnected = false
+    @Published var pipelineStats: PipelineStats?
 
     var currentFrameSize: CGSize { currentImage?.size ?? .zero }
 
@@ -163,30 +206,44 @@ final class RemoteDesktopState: ObservableObject {
     private var lastFPSTime = Date()
     private var receiveTask: Task<Void, any Error>?
     private var renderer: VideoMetalRenderer?
+    private var statsTask: Task<Void, Never>?
 
     func startReceiving(consoleState: ConsoleAppState) async {
         renderer = VideoMetalRenderer()
+        isConnected = true
         receiveTask = Task { [weak self] in
             guard let self = self else { return }
-            for try await frameData in await consoleState.frameUpdates {
+            do {
+                for try await frameData in await consoleState.frameUpdates {
+                    await MainActor.run {
+                        self.frameCount += 1
+                        let now = Date()
+                        if now.timeIntervalSince(self.lastFPSTime) >= 1.0 {
+                            self.fps = self.frameCount
+                            self.frameCount = 0
+                            self.lastFPSTime = now
+                        }
+                        if let image = self.createImage(from: frameData) {
+                            self.currentImage = image
+                        }
+                    }
+                }
+            } catch {
                 await MainActor.run {
-                    self.frameCount += 1
-                    let now = Date()
-                    if now.timeIntervalSince(self.lastFPSTime) >= 1.0 {
-                        self.fps = self.frameCount
-                        self.frameCount = 0
-                        self.lastFPSTime = now
-                    }
-                    if let image = self.createImage(from: frameData) {
-                        self.currentImage = image
-                    }
+                    self.isConnected = false
                 }
             }
         }
     }
 
     func requestKeyframe() async {}
-    func stop() async { receiveTask?.cancel(); receiveTask = nil }
+    func stop() async {
+        receiveTask?.cancel()
+        receiveTask = nil
+        statsTask?.cancel()
+        statsTask = nil
+        isConnected = false
+    }
 
     private func createImage(from data: Data) -> NSImage? {
         guard let bitmap = NSBitmapImageRep(data: data) else { return nil }

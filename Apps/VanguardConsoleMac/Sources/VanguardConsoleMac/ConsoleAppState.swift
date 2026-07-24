@@ -10,6 +10,10 @@ import VanguardVideo
 import VanguardInput
 import VanguardTerminal
 import VanguardSession
+import VanguardClipboard
+import VanguardSecurity
+import VanguardAudit
+import VanguardUI
 
 @MainActor
 public final class ConsoleAppState: ObservableObject {
@@ -20,6 +24,7 @@ public final class ConsoleAppState: ObservableObject {
     @Published public var isConnected = false
     @Published public var connectedNodeName: String?
     @Published public var currentState: SessionState = .idle
+    @Published public var currentTheme: ThemeProfile = .balanced
 
     public enum SessionState {
         case idle
@@ -33,6 +38,10 @@ public final class ConsoleAppState: ObservableObject {
     }
 
     private var coordinator: ConsoleSessionCoordinator?
+    private let clipboardService = ClipboardService()
+    private var identityService: CryptoKitIdentityService? = nil
+    private var auditService: AuditIntegrationService?
+    private let shortcutService = KeyboardShortcutService()
 
     public struct DiscoveredNode: Identifiable, Hashable {
         public let id = UUID()
@@ -56,12 +65,24 @@ public final class ConsoleAppState: ObservableObject {
         }
     }
 
-    public init() {}
+    public init() {
+        Task { await registerShortcuts() }
+    }
 
     public func startScan() async {
+        AppLogger.info(.discovery, "Starting LAN scan...")
+        statusMessage = "Scanning..."
+
         do {
             let discoveryService = BonjourDiscoveryService()
             let identityService = CryptoKitIdentityService()
+            self.identityService = identityService
+
+            let auditLog = InMemoryAuditLogService()
+            let auditService = AuditIntegrationService(auditLog: auditLog)
+            self.auditService = auditService
+            await auditService.startAutoFlush()
+
             let permissionService = MacOSPermissionService()
             let terminalService = POSIXTerminalService()
 
@@ -70,28 +91,38 @@ public final class ConsoleAppState: ObservableObject {
                 transport: InMemoryTransport(),
                 identityService: identityService,
                 permissionService: permissionService,
-                terminalService: terminalService
+                terminalService: terminalService,
+                decoderService: VideoToolboxDecoder()
             )
 
             try await coordinator?.startScan()
             isScanning = true
             statusMessage = "Scanning LAN for nodes..."
+            AppLogger.info(.discovery, "LAN scan started")
 
             Task { await observeCoordinatorState() }
         } catch {
             statusMessage = "Failed to scan: \(error.localizedDescription)"
+            AppLogger.error(.discovery, "Failed to start scan: \(error.localizedDescription)")
         }
     }
 
     public func stopScan() async {
+        AppLogger.info(.discovery, "Stopping LAN scan")
         await coordinator?.stopScan()
+        await clipboardService.stopWatching()
+        await auditService?.stopAutoFlush()
         coordinator = nil
+        identityService = nil
+        auditService = nil
         isScanning = false
         statusMessage = "Stopped"
+        AppLogger.info(.discovery, "LAN scan stopped")
     }
 
     public func connectToNode(_ node: DiscoveredNode) async {
         statusMessage = "Connecting to \(node.name)..."
+        AppLogger.info(.session, "Connecting to node: \(node.name) at \(node.host)")
         discoveredNodes = discoveredNodes.map {
             var n = $0
             if n.id == node.id { n.status = .connecting }
@@ -102,26 +133,43 @@ public final class ConsoleAppState: ObservableObject {
             let transport = NetworkTransport(
                 host: node.host,
                 port: node.advertisement.endpoint.port,
-                useTLS: false
+                useTLS: true
             )
             let discoveryService = BonjourDiscoveryService()
-            let identityService = CryptoKitIdentityService()
+            let localIdentityService = CryptoKitIdentityService()
+            self.identityService = localIdentityService
             let permissionService = MacOSPermissionService()
             let terminalService = POSIXTerminalService()
 
             coordinator = ConsoleSessionCoordinator(
                 discoveryService: discoveryService,
                 transport: transport,
-                identityService: identityService,
+                identityService: localIdentityService,
                 permissionService: permissionService,
-                terminalService: terminalService
+                terminalService: terminalService,
+                decoderService: VideoToolboxDecoder()
             )
             try await coordinator?.connect(to: node.advertisement)
             isConnected = true
             connectedNodeName = node.name
             statusMessage = "Connected to \(node.name)"
+            AppLogger.info(.session, "Connected to \(node.name)")
+
+            await clipboardService.startWatching()
+            AppLogger.info(.clipboard, "Clipboard sync started")
+
+            if let audit = auditService, let identity = identityService {
+                let localIdentity = try await identity.getOrCreateIdentity()
+                await audit.logSecurityEvent(
+                    actorNodeID: localIdentity.nodeID,
+                    targetNodeID: localIdentity.nodeID,
+                    sessionID: nil,
+                    action: .connected
+                )
+            }
         } catch {
             statusMessage = "Failed to connect: \(error.localizedDescription)"
+            AppLogger.error(.session, "Failed to connect to \(node.name): \(error.localizedDescription)")
             discoveredNodes = discoveredNodes.map {
                 var n = $0
                 if n.id == node.id { n.status = .online }
@@ -131,10 +179,24 @@ public final class ConsoleAppState: ObservableObject {
     }
 
     public func disconnect() async {
+        AppLogger.info(.session, "Disconnecting")
+        if let audit = auditService, let identity = identityService {
+            let localIdentity = try? await identity.getOrCreateIdentity()
+            if let localIdentity {
+                await audit.logSecurityEvent(
+                    actorNodeID: localIdentity.nodeID,
+                    targetNodeID: localIdentity.nodeID,
+                    sessionID: nil,
+                    action: .disconnected
+                )
+            }
+        }
         await coordinator?.disconnect()
+        await clipboardService.stopWatching()
         isConnected = false
         connectedNodeName = nil
         statusMessage = "Disconnected"
+        AppLogger.info(.session, "Disconnected")
     }
 
     public func submitPairingCode(_ code: String) async throws {
@@ -184,8 +246,37 @@ public final class ConsoleAppState: ObservableObject {
         }
     }
 
+    public func setTheme(_ profile: ThemeProfile) {
+        currentTheme = profile
+    }
+
     public enum ConsoleError: Error {
         case notConnected
+    }
+
+    private func registerShortcuts() async {
+        do {
+            try await shortcutService.registerShortcut(.emergencyStop)
+            try await shortcutService.registerShortcut(.toggleFullscreen)
+            try await shortcutService.registerShortcut(.newTab)
+            try await shortcutService.registerShortcut(.disconnect)
+        } catch {
+            print("Failed to register shortcuts: \(error)")
+        }
+
+        await shortcutService.registerShortcutCallback { [weak self] shortcut in
+            guard let self else { return }
+            Task { @MainActor in
+                switch shortcut.name {
+                case "Emergency Stop":
+                    await self.disconnect()
+                case "Disconnect":
+                    await self.disconnect()
+                default:
+                    break
+                }
+            }
+        }
     }
 
     private func observeCoordinatorState() async {

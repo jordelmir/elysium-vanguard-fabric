@@ -83,4 +83,53 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
             NSWorkspace.shared.open(url)
         }
     }
+
+    public func openScreenRecordingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public func openInputMonitoringSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public func revalidateAllPermissions() async -> [PermissionKind: PermissionState] {
+        var results: [PermissionKind: PermissionState] = [:]
+        for kind in PermissionKind.allCases {
+            results[kind] = await checkPermission(kind: kind)
+        }
+        return results
+    }
+
+    public func watchPermissionChanges(interval: TimeInterval) -> AsyncStream<PermissionKind> {
+        AsyncStream { continuation in
+            let task = Task { [weak self] in
+                var previous: [PermissionKind: PermissionState] = [:]
+                for kind in PermissionKind.allCases {
+                    previous[kind] = await self?.checkPermission(kind: kind)
+                }
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                    guard !Task.isCancelled else { break }
+                    for kind in PermissionKind.allCases {
+                        let current = await self?.checkPermission(kind: kind)
+                        if let current, previous[kind] != current {
+                            continuation.yield(kind)
+                            previous[kind] = current
+                        }
+                    }
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
 }

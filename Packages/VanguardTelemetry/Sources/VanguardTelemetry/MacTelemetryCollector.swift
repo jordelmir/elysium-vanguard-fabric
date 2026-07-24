@@ -67,11 +67,29 @@ public final class MacTelemetryCollector: TelemetryCollector, @unchecked Sendabl
             pressure = .normal
         }
 
+        let diskTotal: UInt64
+        let diskAvailable: UInt64
+        let diskUsed: UInt64
+
+        do {
+            let fileURL = URL(fileURLWithPath: NSHomeDirectory())
+            let values = try fileURL.resourceValues(
+                forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
+            )
+            diskTotal = UInt64(values.volumeTotalCapacity ?? 0)
+            diskAvailable = UInt64(values.volumeAvailableCapacityForImportantUsage ?? 0)
+            diskUsed = diskTotal > diskAvailable ? diskTotal - diskAvailable : 0
+        } catch {
+            diskTotal = 0
+            diskAvailable = 0
+            diskUsed = 0
+        }
+
         return NodeTelemetrySnapshot(
             capturedAtMonotonicNanos: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000_000),
             cpu: CPUMetrics(usagePercent: cpuUsage, coreCount: cpuCount, loadAverage1m: 0, loadAverage5m: 0, loadAverage15m: 0),
             memory: MemoryMetrics(totalBytes: physicalMemory, usedBytes: ramUsed, availableBytes: availableBytes, pressure: pressure),
-            disk: DiskMetrics(totalBytes: 0, availableBytes: 0, usedBytes: 0),
+            disk: DiskMetrics(totalBytes: diskTotal, availableBytes: diskAvailable, usedBytes: diskUsed),
             network: NetworkMetrics(bytesSent: 0, bytesReceived: 0, activeConnections: 0),
             video: nil
         )
