@@ -1,12 +1,14 @@
 import Foundation
 import os
 import CoreVideo
+import Network
 import VanguardDomain
 import VanguardProtocol
 import VanguardTransport
 import VanguardDiscovery
 import VanguardIdentity
 import VanguardPermissions
+import VanguardSecurity
 import VanguardCapture
 import VanguardVideo
 import VanguardInput
@@ -15,7 +17,6 @@ import VanguardAudit
 
 // MARK: - Node Session Coordinator
 
-@available(macOS 12.3, *)
 public actor NodeSessionCoordinator {
     private let discoveryService: any DiscoveryService
     private let transport: any VanguardTransport
@@ -34,6 +35,13 @@ public actor NodeSessionCoordinator {
     private var auditService: AuditIntegrationService?
     private var isCapturing = false
     private var captureTask: Task<Void, Never>?
+    private var messageTask: Task<Void, Never>?
+    private var authorizationGuard: AuthorizationGuard?
+    private var _pipelineStats = PipelineStats(
+        framesCaptured: 0, framesEncoded: 0, framesDecoded: 0,
+        framesRendered: 0, averageEncodeTimeMs: 0, averageDecodeTimeMs: 0,
+        averageRenderLatencyMs: 0, currentBitrate: 0
+    )
 
     public struct NodeSession {
         public let sessionID: SessionID
@@ -46,6 +54,7 @@ public actor NodeSessionCoordinator {
         case idle
         case advertising
         case pairing(String)
+        case codeValidated(NodeID)
         case connected(NodeID)
         case capturing
         case error(String)
@@ -55,6 +64,7 @@ public actor NodeSessionCoordinator {
             case (.idle, .idle): return true
             case (.advertising, .advertising): return true
             case (.pairing(let a), .pairing(let b)): return a == b
+            case (.codeValidated(let a), .codeValidated(let b)): return a == b
             case (.connected(let a), .connected(let b)): return a == b
             case (.capturing, .capturing): return true
             case (.error(let a), .error(let b)): return a == b
@@ -69,19 +79,7 @@ public actor NodeSessionCoordinator {
         }
     }
 
-    private var _pipelineStats = PipelineStats(
-        framesCaptured: 0,
-        framesEncoded: 0,
-        framesDecoded: 0,
-        framesRendered: 0,
-        averageEncodeTimeMs: 0,
-        averageDecodeTimeMs: 0,
-        averageRenderLatencyMs: 0,
-        currentBitrate: 0
-    )
-    public var pipelineStats: PipelineStats? {
-        _pipelineStats
-    }
+    public var pipelineStats: PipelineStats? { _pipelineStats }
 
     public init(
         discoveryService: any DiscoveryService,
@@ -107,11 +105,15 @@ public actor NodeSessionCoordinator {
         self.auditService = service
     }
 
+    // MARK: - Start (Single Listener with Bonjour)
+
     public func start() async throws {
         updateState(.advertising)
 
+        let authGuard = AuthorizationGuard()
+        self.authorizationGuard = authGuard
+
         let identity = try await identityService.getOrCreateIdentity()
-        let nodeID = identity.nodeID
         let hostname = Host.current().localizedName ?? "Unknown"
 
         #if arch(arm64)
@@ -120,8 +122,8 @@ public actor NodeSessionCoordinator {
         let arch: CPUArchitecture = .x86_64
         #endif
 
-        let advertisement = NodeAdvertisement(
-            nodeIDHash: Data(nodeID.rawValue.uuidString.utf8),
+        let ad = NodeAdvertisement(
+            nodeIDHash: Data(identity.nodeID.rawValue.uuidString.utf8),
             displayName: hostname,
             architecture: arch,
             osFamily: .macOS,
@@ -131,31 +133,66 @@ public actor NodeSessionCoordinator {
             endpoint: NodeEndpoint(host: hostname, port: 49494)
         )
 
-        AppLogger.info(.node, "Starting node: \(hostname) (\(arch.rawValue))")
-        AppLogger.info(.node, "Node ID: \(nodeID.rawValue.uuidString.prefix(8))")
+        var txtRecord: [String: String] = [:]
+        txtRecord["pv"] = ad.protocolVersion.description
+        txtRecord["arch"] = ad.architecture.rawValue
+        txtRecord["os"] = ad.osFamily.rawValue
+        txtRecord["osv"] = ad.osVersion
+        txtRecord["pair"] = ad.pairingState.rawValue
+        txtRecord["nh"] = ad.nodeIDHash.base64EncodedString()
+        txtRecord["codec"] = "h264"
+        txtRecord["capture"] = "sck"
+        txtRecord["tls"] = "1.3"
 
-        try await discoveryService.publishAdvertisement(advertisement)
-        AppLogger.info(.node, "Advertisement published via Bonjour")
+        if let bonjourTransport = transport as? BonjourTransport {
+            try await bonjourTransport.listenWithBonjour(
+                port: 49494,
+                serviceName: hostname,
+                serviceType: "_elysium-vanguard._tcp",
+                txtRecord: txtRecord
+            )
+        } else {
+            try await transport.listen(port: 49494)
+        }
 
-        try await transport.listen(port: 49494)
-        AppLogger.info(.node, "Listening on port 49494")
+        AppLogger.info(.node, "Node listening on port 49494 with Bonjour")
 
-        Task { await listenForMessages() }
+        messageTask = Task { await listenForMessages() }
     }
 
     public func stop() async {
         AppLogger.info(.node, "Stopping node")
         stopCapture()
-        await discoveryService.unpublish()
+        messageTask?.cancel()
+        messageTask = nil
+
+        if let sessionID = currentSession?.sessionID {
+            await authorizationGuard?.revokeSession(sessionID)
+        }
+
         await transport.disconnect(reason: .userInitiated)
         updateState(.idle)
         AppLogger.info(.node, "Node stopped")
     }
 
+    // MARK: - Pairing
+
     public func approvePairing() async throws {
-        guard let code = currentChallengeCode, let consoleID = consoleNodeID else { return }
+        guard let consoleID = consoleNodeID else {
+            throw PairingError.noPendingPairing
+        }
 
         AppLogger.info(.pairing, "Approving pairing with console: \(consoleID.rawValue.uuidString.prefix(8))")
+
+        let grantedCaps: Set<NodeCapability> = [
+            .screenView, .screenControl, .terminalOpen,
+            .clipboardRead, .clipboardWrite,
+            .fileRead, .fileWrite
+        ]
+
+        if let sessionID = currentSession?.sessionID {
+            await authorizationGuard?.registerSession(sessionID, capabilities: grantedCaps)
+        }
 
         let identity = try await identityService.getOrCreateIdentity()
         let completePayload = PairingCompletePayload(
@@ -167,122 +204,17 @@ public actor NodeSessionCoordinator {
         let message = OutboundMessage(messageType: .pairingComplete, payload: data)
         try await transport.send(message)
 
+        updateState(.connected(consoleID))
         updateState(.capturing)
-        AppLogger.info(.pairing, "Pairing approved and complete — starting video capture")
+        AppLogger.info(.pairing, "Pairing approved — starting video capture")
         await startCaptureLoop()
     }
 
-    private func startCaptureLoop() async {
-        guard !isCapturing else { return }
-        isCapturing = true
-
-        captureTask = Task { [weak self] in
-            guard let self else { return }
-
-            do {
-                let sources = try await self.captureService.availableSources()
-                guard let source = sources.first else {
-                    AppLogger.error(.capture, "No display source available")
-                    await self.updateState(.error("No display available"))
-                    return
-                }
-
-                let config = CaptureConfiguration(maxWidth: 1920, maxHeight: 1080, fps: 30)
-                let frameStream = try await self.captureService.startCapture(source: source, configuration: config)
-                AppLogger.info(.capture, "Screen capture started on \(source.name)")
-
-                let encoderWidth = 1920
-                let encoderHeight = 1080
-                try await self.encoderService.configure(width: encoderWidth, height: encoderHeight, fps: 30, bitrate: 8_000_000)
-                AppLogger.info(.capture, "Encoder configured: \(encoderWidth)x\(encoderHeight)@30fps, 8Mbps")
-
-                var frameCount: UInt64 = 0
-
-                for try await frameData in frameStream {
-                    guard !Task.isCancelled else { break }
-
-                    frameCount += 1
-                    let startEncode = Date()
-
-                    if let encodedFrame = try? await self.encoderService.encodeFrame(frameData, width: encoderWidth, height: encoderHeight) {
-                        let encodeTime = Date().timeIntervalSince(startEncode) * 1000
-
-                        let framePayload = VideoFramePayload(
-                            frameID: encodedFrame.frameID,
-                            presentationTimestampNanos: encodedFrame.presentationTimestampNanos,
-                            isKeyframe: encodedFrame.isKeyframe,
-                            codecConfigurationRevision: encodedFrame.codecConfigurationRevision,
-                            payload: encodedFrame.payload
-                        )
-                        let payloadData = try JSONEncoder().encode(framePayload)
-                        let message = OutboundMessage(messageType: .videoFrame, payload: payloadData)
-                        try? await self.transport.send(message)
-
-                        await self.updatePipelineStats(
-                            framesCaptured: frameCount,
-                            framesEncoded: frameCount,
-                            encodeTimeMs: encodeTime
-                        )
-                    }
-                }
-            } catch {
-                if !Task.isCancelled {
-                    AppLogger.error(.capture, "Capture stream ended: \(error.localizedDescription)")
-                }
-            }
-
-            await self.setCapturing(false)
-            AppLogger.info(.capture, "Capture loop exited")
-        }
+    public enum PairingError: Error, Sendable {
+        case noPendingPairing
     }
 
-    private func updatePipelineStats(framesCaptured: UInt64, framesEncoded: UInt64, encodeTimeMs: Double) {
-        _pipelineStats = PipelineStats(
-            framesCaptured: framesCaptured,
-            framesEncoded: framesEncoded,
-            framesDecoded: 0,
-            framesRendered: 0,
-            averageEncodeTimeMs: encodeTimeMs,
-            averageDecodeTimeMs: 0,
-            averageRenderLatencyMs: 0,
-            currentBitrate: 8_000_000
-        )
-    }
-
-    private func setCapturing(_ value: Bool) {
-        isCapturing = value
-    }
-
-    public func stopCapture() {
-        captureTask?.cancel()
-        captureTask = nil
-        isCapturing = false
-        Task {
-            await captureService.stopCapture()
-            await encoderService.reset()
-        }
-        AppLogger.info(.capture, "Capture stopped")
-    }
-
-    public func handleInputEvent(_ event: RemoteInputEvent) async throws {
-        try await inputService.dispatch(event)
-    }
-
-    public func handleTerminalOpen(_ config: TerminalConfiguration) async throws -> TerminalSessionHandle {
-        try await terminalService.open(configuration: config)
-    }
-
-    public func handleTerminalInput(_ sessionID: TerminalSessionID, data: Data) async throws {
-        try await terminalService.write(sessionID: sessionID, data: data)
-    }
-
-    public func handleTerminalResize(_ sessionID: TerminalSessionID, columns: UInt16, rows: UInt16) async throws {
-        try await terminalService.resize(sessionID: sessionID, columns: columns, rows: rows)
-    }
-
-    public func handleTerminalClose(_ sessionID: TerminalSessionID) async {
-        await terminalService.close(sessionID: sessionID, signal: .hangup)
-    }
+    // MARK: - Message Handling
 
     private func listenForMessages() async {
         do {
@@ -290,7 +222,7 @@ public actor NodeSessionCoordinator {
                 await handleMessage(message)
             }
         } catch {
-            updateState(.error("Connection lost"))
+            updateState(.error("Connection lost: \(error.localizedDescription)"))
         }
     }
 
@@ -303,47 +235,57 @@ public actor NodeSessionCoordinator {
         case .inputEvent:
             do {
                 let event = try JSONDecoder().decode(RemoteInputEvent.self, from: message.payload)
-                try await handleInputEvent(event)
+                if let sessionID = currentSession?.sessionID,
+                   await authorizationGuard?.checkCapability(.screenControl, sessionID: sessionID) == false {
+                    AppLogger.warning(.input, "Input blocked — missing screenControl capability")
+                } else {
+                    try await inputService.dispatch(event)
+                }
             } catch {
-                os_log(.error, "Failed to handle input event: %{public}@", error.localizedDescription)
+                AppLogger.error(.input, "Failed to handle input: \(error.localizedDescription)")
             }
         case .terminalInput:
             do {
                 let payload = try JSONDecoder().decode(TerminalInputPayload.self, from: message.payload)
-                try await handleTerminalInput(payload.sessionID, data: payload.data)
+                if let sessionID = currentSession?.sessionID,
+                   await authorizationGuard?.checkCapability(.terminalOpen, sessionID: sessionID) == false {
+                    AppLogger.warning(.terminal, "Terminal input blocked — missing terminalOpen capability")
+                } else {
+                    try await terminalService.write(sessionID: payload.sessionID, data: payload.data)
+                }
             } catch {
-                os_log(.error, "Failed to handle terminal input: %{public}@", error.localizedDescription)
+                AppLogger.error(.terminal, "Failed to handle terminal input: \(error.localizedDescription)")
             }
         case .terminalOpen:
             do {
                 let payload = try JSONDecoder().decode(TerminalOpenPayload.self, from: message.payload)
-                let _ = try await handleTerminalOpen(payload.configuration)
+                if let sessionID = currentSession?.sessionID,
+                   await authorizationGuard?.checkCapability(.terminalOpen, sessionID: sessionID) == false {
+                    AppLogger.warning(.terminal, "Terminal open blocked — missing terminalOpen capability")
+                } else {
+                    let handle = try await terminalService.open(sessionID: payload.sessionID, configuration: payload.configuration)
+                    let openedPayload = TerminalOutputPayload(sessionID: handle.sessionID, data: Data("Terminal opened (pid \(handle.pid))\n".utf8), offset: 0)
+                    let openedData = try JSONEncoder().encode(openedPayload)
+                    let openedMsg = OutboundMessage(messageType: .terminalOutput, payload: openedData)
+                    try await transport.send(openedMsg)
+                }
             } catch {
-                os_log(.error, "Failed to handle terminal open: %{public}@", error.localizedDescription)
+                AppLogger.error(.terminal, "Failed to handle terminal open: \(error.localizedDescription)")
             }
         case .terminalResize:
             do {
                 let payload = try JSONDecoder().decode(TerminalResizePayload.self, from: message.payload)
-                try await handleTerminalResize(payload.sessionID, columns: payload.columns, rows: payload.rows)
+                try await terminalService.resize(sessionID: payload.sessionID, columns: payload.columns, rows: payload.rows)
             } catch {
-                os_log(.error, "Failed to handle terminal resize: %{public}@", error.localizedDescription)
+                AppLogger.error(.terminal, "Failed to handle terminal resize: \(error.localizedDescription)")
             }
         case .terminalClose:
             if let payload = try? JSONDecoder().decode(TerminalClosePayload.self, from: message.payload) {
-                await handleTerminalClose(payload.sessionID)
-            }
-        case .heartbeat:
-            let ackPayload = HeartbeatPayload(timestampNanos: UInt64(Date().timeIntervalSince1970 * 1_000_000_000), sequence: 0)
-            do {
-                let data = try JSONEncoder().encode(ackPayload)
-                let msg = OutboundMessage(messageType: .heartbeatAck, payload: data)
-                try await transport.send(msg)
-            } catch {
-                os_log(.error, "Failed to send heartbeat ack: %{public}@", error.localizedDescription)
+                await terminalService.close(sessionID: payload.sessionID, signal: .hangup)
             }
         case .videoKeyframeRequest:
             AppLogger.info(.capture, "Console requested keyframe")
-            Task { await encoderService.requestKeyframe() }
+            await encoderService.requestKeyframe()
         default:
             break
         }
@@ -354,8 +296,6 @@ public actor NodeSessionCoordinator {
 
         do {
             let identity = try await identityService.getOrCreateIdentity()
-            let nodeID = identity.nodeID
-
             consoleNodeID = helloPayload.nodeID
             currentSession = NodeSession(
                 sessionID: SessionID(),
@@ -366,7 +306,7 @@ public actor NodeSessionCoordinator {
 
             let ackPayload = HelloAckPayload(
                 protocolVersion: .v1,
-                nodeID: nodeID,
+                nodeID: identity.nodeID,
                 acceptedVersion: .v1
             )
             let ackData = try JSONEncoder().encode(ackPayload)
@@ -400,16 +340,147 @@ public actor NodeSessionCoordinator {
 
         if payload.challengeCode == expectedCode {
             if let consoleID = consoleNodeID {
-                updateState(.connected(consoleID))
+                updateState(.codeValidated(consoleID))
             }
         } else {
             updateState(.error("Wrong pairing code"))
         }
     }
 
+    // MARK: - Video Capture
+
+    private func startCaptureLoop() async {
+        guard !isCapturing else { return }
+        isCapturing = true
+
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let sources = try await self.captureService.availableSources()
+                guard let source = sources.first else {
+                    await self.updateState(.error("No display available"))
+                    return
+                }
+
+                let config = CaptureConfiguration(maxWidth: 1280, maxHeight: 720, fps: 30)
+                let frameStream = try await self.captureService.startCapture(source: source, configuration: config)
+
+                try await self.encoderService.configure(width: 1280, height: 720, fps: 30, bitrate: 5_000_000)
+
+                var frameCount: UInt64 = 0
+                var displayIDSet = false
+
+                for try await capturedFrame in frameStream {
+                    guard !Task.isCancelled else { break }
+
+                    if !displayIDSet, capturedFrame.displayID != 0 {
+                        await self.inputService.setCapturedDisplayID(capturedFrame.displayID)
+                        displayIDSet = true
+                    }
+                    frameCount += 1
+                    let startEncode = Date()
+
+                    do {
+                        let output = try await self.encoderService.encode(capturedFrame)
+                        let encodeTime = Date().timeIntervalSince(startEncode) * 1000
+
+                        switch output {
+                        case .configuration(let config):
+                            let configPayload = VideoCodecConfigurationPayload(
+                                codec: config.codec,
+                                revision: config.revision,
+                                width: config.width,
+                                height: config.height,
+                                nalLengthSize: config.nalLengthSize,
+                                sps: config.sps,
+                                pps: config.pps
+                            )
+                            let data = try JSONEncoder().encode(configPayload)
+                            let msg = OutboundMessage(messageType: .videoConfiguration, payload: data)
+                            try await self.transport.send(msg)
+
+                        case .accessUnit(let au):
+                            let auPayload = VideoAccessUnitPayload(
+                                frameID: au.frameID,
+                                presentationTimestampNanos: au.presentationTimestampNanos,
+                                durationNanos: au.durationNanos,
+                                isKeyframe: au.isKeyframe,
+                                configurationRevision: au.configurationRevision,
+                                avccData: au.avccPayload
+                            )
+                            let data = try JSONEncoder().encode(auPayload)
+                            let msg = OutboundMessage(messageType: .videoAccessUnit, payload: data)
+                            try await self.transport.send(msg)
+
+                        case .configurationAndAccessUnit(let config, let au):
+                            let configPayload = VideoCodecConfigurationPayload(
+                                codec: config.codec,
+                                revision: config.revision,
+                                width: config.width,
+                                height: config.height,
+                                nalLengthSize: config.nalLengthSize,
+                                sps: config.sps,
+                                pps: config.pps
+                            )
+                            let configData = try JSONEncoder().encode(configPayload)
+                            let configMsg = OutboundMessage(messageType: .videoConfiguration, payload: configData)
+                            try await self.transport.send(configMsg)
+
+                            let auPayload = VideoAccessUnitPayload(
+                                frameID: au.frameID,
+                                presentationTimestampNanos: au.presentationTimestampNanos,
+                                durationNanos: au.durationNanos,
+                                isKeyframe: au.isKeyframe,
+                                configurationRevision: au.configurationRevision,
+                                avccData: au.avccPayload
+                            )
+                            let auData = try JSONEncoder().encode(auPayload)
+                            let auMsg = OutboundMessage(messageType: .videoAccessUnit, payload: auData)
+                            try await self.transport.send(auMsg)
+                        }
+
+                        await self.updatePipelineStats(PipelineStats(
+                            framesCaptured: frameCount, framesEncoded: frameCount,
+                            framesDecoded: 0, framesRendered: 0,
+                            averageEncodeTimeMs: encodeTime, averageDecodeTimeMs: 0,
+                            averageRenderLatencyMs: 0, currentBitrate: 5_000_000
+                        ))
+                    } catch {
+                        AppLogger.error(.capture, "Encode failed: \(error.localizedDescription)")
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.error(.capture, "Capture ended: \(error.localizedDescription)")
+                }
+            }
+
+            await self.setCapturing(false)
+        }
+    }
+
+    public func stopCapture() {
+        captureTask?.cancel()
+        captureTask = nil
+        isCapturing = false
+        Task {
+            await captureService.stopCapture()
+            await encoderService.reset()
+        }
+    }
+
     private func updateState(_ newState: NodeState) {
         currentState = newState
         stateContinuation?.yield(newState)
+    }
+
+    private func updatePipelineStats(_ stats: PipelineStats) {
+        _pipelineStats = stats
+    }
+
+    private func setCapturing(_ value: Bool) {
+        isCapturing = value
     }
 }
 
@@ -425,12 +496,12 @@ public actor ConsoleSessionCoordinator {
 
     private var currentState: ConsoleState = .idle
     private var currentSession: ConsoleSession?
-    private var discoveredNodes: [NodeAdvertisement] = []
     private var stateContinuation: AsyncStream<ConsoleState>.Continuation?
-    private var frameContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    private var frameContinuation: AsyncThrowingStream<SendablePixelBuffer, Error>.Continuation?
     private var terminalContinuation: AsyncStream<TerminalOutputPayload>.Continuation?
     private var pendingChallengeCode: String?
     private var isDecoderConfigured = false
+    private var messageTask: Task<Void, Never>?
 
     public struct ConsoleSession {
         public let sessionID: SessionID
@@ -472,7 +543,7 @@ public actor ConsoleSessionCoordinator {
         }
     }
 
-    public var frameUpdates: AsyncThrowingStream<Data, Error> {
+    public var frameUpdates: AsyncThrowingStream<SendablePixelBuffer, Error> {
         AsyncThrowingStream { continuation in
             self.frameContinuation = continuation
         }
@@ -484,9 +555,7 @@ public actor ConsoleSessionCoordinator {
         }
     }
 
-    public var currentChallengeCode: String? {
-        pendingChallengeCode
-    }
+    public var currentChallengeCode: String? { pendingChallengeCode }
 
     public init(
         discoveryService: any DiscoveryService,
@@ -504,19 +573,20 @@ public actor ConsoleSessionCoordinator {
         self.decoderService = decoderService
     }
 
+    // MARK: - Scan
+
     public func startScan() async throws {
         updateState(.scanning)
         try await discoveryService.startBrowsing()
 
-        Task {
-            for try await state in await discoveryService.stateUpdates {
+        Task { [weak self] in
+            guard let self else { return }
+            for try await state in await self.discoveryService.stateUpdates {
                 switch state {
                 case .nodeFound(let ad), .nodeUpdated(let ad):
-                    discoveredNodes.append(ad)
-                    updateState(.discovered(discoveredNodes))
-                case .nodeLost(let hash):
-                    discoveredNodes.removeAll { $0.nodeIDHash == hash }
-                    updateState(.discovered(discoveredNodes))
+                    await self.handleDiscoveredNode(ad)
+                case .nodeLost:
+                    break
                 default:
                     break
                 }
@@ -524,17 +594,28 @@ public actor ConsoleSessionCoordinator {
         }
     }
 
+    private var discoveredAdvertisements: [Data: NodeAdvertisement] = [:]
+
+    private func handleDiscoveredNode(_ ad: NodeAdvertisement) async {
+        discoveredAdvertisements[ad.nodeIDHash] = ad
+        let all = Array(discoveredAdvertisements.values)
+        updateState(.discovered(all))
+    }
+
     public func stopScan() async {
         await discoveryService.stopBrowsing()
+        messageTask?.cancel()
+        messageTask = nil
         updateState(.idle)
     }
+
+    // MARK: - Connect
 
     public func connect(to node: NodeAdvertisement) async throws {
         updateState(.connecting(node))
         AppLogger.info(.session, "Connecting to node: \(node.displayName)")
 
-        let endpoint = node.endpoint
-        try await transport.connect(to: endpoint)
+        try await transport.connect(to: node.endpoint)
 
         let identity = try await identityService.getOrCreateIdentity()
 
@@ -544,11 +625,10 @@ public actor ConsoleSessionCoordinator {
         let arch: CPUArchitecture = .x86_64
         #endif
 
-        let nodeID = NodeID()
         currentSession = ConsoleSession(
             sessionID: SessionID(),
-            nodeID: nodeID,
-            nodeEndpoint: endpoint,
+            nodeID: NodeID(),
+            nodeEndpoint: node.endpoint,
             connectedAt: Date()
         )
 
@@ -564,29 +644,22 @@ public actor ConsoleSessionCoordinator {
         let message = OutboundMessage(messageType: .hello, payload: data)
         try await transport.send(message)
 
-        AppLogger.info(.session, "Hello message sent to \(node.displayName)")
-
-        Task { await listenForMessages() }
+        messageTask = Task { await listenForMessages() }
     }
 
     public func disconnect() async {
-        AppLogger.info(.session, "Disconnecting from node")
+        AppLogger.info(.session, "Disconnecting")
+        messageTask?.cancel()
+        messageTask = nil
         await transport.disconnect(reason: .userInitiated)
         currentSession = nil
         isDecoderConfigured = false
         updateState(.idle)
-        AppLogger.info(.session, "Disconnected")
     }
 
-    public func requestKeyframe() async throws {
-        let message = OutboundMessage(messageType: .videoKeyframeRequest, payload: Data())
-        try await transport.send(message)
-        AppLogger.info(.session, "Keyframe requested from node")
-    }
+    // MARK: - Pairing
 
     public func submitPairingCode(_ code: String) async throws {
-        guard let session = currentSession else { return }
-
         let identity = try await identityService.getOrCreateIdentity()
         let responsePayload = PairingResponsePayload(
             consoleID: identity.nodeID,
@@ -600,11 +673,20 @@ public actor ConsoleSessionCoordinator {
         try await transport.send(message)
     }
 
+    public func requestKeyframe() async throws {
+        let message = OutboundMessage(messageType: .videoKeyframeRequest, payload: Data())
+        try await transport.send(message)
+    }
+
+    // MARK: - Input
+
     public func sendInputEvent(_ event: RemoteInputEvent) async throws {
         let payload = try JSONEncoder().encode(event)
         let message = OutboundMessage(messageType: .inputEvent, payload: payload)
         try await transport.send(message)
     }
+
+    // MARK: - Terminal
 
     public func openTerminal(configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
         let sessionID = TerminalSessionID()
@@ -622,19 +704,14 @@ public actor ConsoleSessionCoordinator {
         try await transport.send(message)
     }
 
-    public func resizeTerminal(_ sessionID: TerminalSessionID, columns: UInt16, rows: UInt16) async throws {
-        let payload = TerminalResizePayload(sessionID: sessionID, columns: columns, rows: rows)
-        let encoded = try JSONEncoder().encode(payload)
-        let message = OutboundMessage(messageType: .terminalResize, payload: encoded)
-        try await transport.send(message)
-    }
-
     public func closeTerminal(_ sessionID: TerminalSessionID) async throws {
         let payload = TerminalClosePayload(sessionID: sessionID, signal: .hangup)
         let encoded = try JSONEncoder().encode(payload)
         let message = OutboundMessage(messageType: .terminalClose, payload: encoded)
         try await transport.send(message)
     }
+
+    // MARK: - Message Handling
 
     private func listenForMessages() async {
         do {
@@ -654,46 +731,34 @@ public actor ConsoleSessionCoordinator {
             await handlePairingRequest(message)
         case .pairingComplete:
             await handlePairingComplete(message)
-        case .videoFrame:
+        case .videoConfiguration:
             do {
-                let frame = try JSONDecoder().decode(VideoFramePayload.self, from: message.payload)
-
-                let encodedFrame = EncodedVideoFrame(
-                    frameID: frame.frameID,
-                    presentationTimestampNanos: frame.presentationTimestampNanos,
-                    isKeyframe: frame.isKeyframe,
-                    codecConfigurationRevision: frame.codecConfigurationRevision,
-                    payload: frame.payload
+                let config = try JSONDecoder().decode(VideoCodecConfigurationPayload.self, from: message.payload)
+                try await decoderService.configure(
+                    sps: config.sps,
+                    pps: config.pps,
+                    width: Int(config.width),
+                    height: Int(config.height)
                 )
-
-                if !isDecoderConfigured {
-                    do {
-                        try await decoderService.configure(codecConfiguration: frame.payload)
-                        isDecoderConfigured = true
-                        AppLogger.info(.session, "Decoder configured from first frame")
-                    } catch {
-                        AppLogger.warning(.session, "Decoder config from frame failed, trying decode anyway: \(error.localizedDescription)")
-                    }
-                }
-
-                _ = try? await decoderService.decodeFrame(encodedFrame)
-
-                if let pixelBuffer = await decoderService.getLastDecodedPixelBuffer() {
-                    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-                    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-
-                    if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
-                        let width = CVPixelBufferGetWidth(pixelBuffer)
-                        let height = CVPixelBufferGetHeight(pixelBuffer)
-                        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-                        let data = Data(bytes: baseAddress, count: height * bytesPerRow)
-                        frameContinuation?.yield(data)
-                    }
-                } else {
-                    frameContinuation?.yield(frame.payload)
-                }
+                AppLogger.info(.decode, "Decoder configured: \(config.width)x\(config.height)")
             } catch {
-                os_log(.error, "Failed to decode video frame: %{public}@", error.localizedDescription)
+                AppLogger.error(.decode, "Failed to configure decoder: \(error.localizedDescription)")
+            }
+        case .videoAccessUnit:
+            do {
+                let auPayload = try JSONDecoder().decode(VideoAccessUnitPayload.self, from: message.payload)
+                let accessUnit = EncodedVideoAccessUnit(
+                    frameID: auPayload.frameID,
+                    presentationTimestampNanos: auPayload.presentationTimestampNanos,
+                    durationNanos: auPayload.durationNanos,
+                    isKeyframe: auPayload.isKeyframe,
+                    configurationRevision: auPayload.configurationRevision,
+                    avccPayload: auPayload.avccData
+                )
+                let decoded = try await decoderService.decode(accessUnit)
+                frameContinuation?.yield(SendablePixelBuffer(decoded.pixelBuffer))
+            } catch {
+                AppLogger.error(.decode, "Failed to decode video frame: \(error.localizedDescription)")
             }
         case .terminalOutput:
             do {
@@ -702,16 +767,11 @@ public actor ConsoleSessionCoordinator {
             } catch {
                 os_log(.error, "Failed to decode terminal output: %{public}@", error.localizedDescription)
             }
-        case .terminalOpened:
-            break
         case .heartbeatAck:
             break
         case .error:
-            do {
-                let payload = try JSONDecoder().decode(ErrorPayload.self, from: message.payload)
+            if let payload = try? JSONDecoder().decode(ErrorPayload.self, from: message.payload) {
                 updateState(.error(payload.message))
-            } catch {
-                os_log(.error, "Failed to decode error payload: %{public}@", error.localizedDescription)
             }
         default:
             break
@@ -735,7 +795,7 @@ public actor ConsoleSessionCoordinator {
         pendingChallengeCode = nil
         if let nodeID = currentSession?.nodeID {
             updateState(.capturing)
-            AppLogger.info(.session, "Pairing complete — ready to receive video frames")
+            AppLogger.info(.session, "Pairing complete — ready to receive video")
         }
     }
 
