@@ -1,5 +1,6 @@
 import Foundation
 import VanguardDomain
+import CoreGraphics
 
 // MARK: - Input Service Protocol (Console side - captures local input)
 
@@ -15,4 +16,5 @@ public protocol InputDispatchService: Sendable {
     func releaseAllKeys() async
     func isAccessibilityAuthorized() async -> Bool
     func requestAccessibility() async -> Bool
+    func setCapturedDisplayID(_ displayID: CGDirectDisplayID)
 }

@@ -32,10 +32,15 @@ public final class CGEventInputDispatchService: InputDispatchService, @unchecked
     private var repeatingKeyCode: UInt16?
     private var repeatingModifiers: ModifierSet = []
     private var tokenBucket: TokenBucket
+    private var capturedDisplayID: CGDirectDisplayID = 0
     public var emergencyEscapeHandler: (() -> Void)?
 
     public init() {
         tokenBucket = TokenBucket(maxRate: 1000)
+    }
+
+    public func setCapturedDisplayID(_ displayID: CGDirectDisplayID) {
+        lock.withLock { capturedDisplayID = displayID }
     }
 
     deinit {
@@ -398,36 +403,24 @@ public final class CGEventInputDispatchService: InputDispatchService, @unchecked
     // MARK: - Coordinate Normalization
 
     private func normalizeCoordinates(x: Double, y: Double) -> CGPoint {
-        let screens = NSScreen.screens
-        guard let mainScreen = NSScreen.main else {
-            return CGPoint(x: x * 1920, y: (1.0 - y) * 1080)
+        let displayID: CGDirectDisplayID = lock.withLock { capturedDisplayID }
+        let bounds: CGRect
+        if displayID != 0 {
+            bounds = CGDisplayBounds(displayID)
+        } else if let mainScreen = NSScreen.main {
+            bounds = mainScreen.visibleFrame
+        } else {
+            bounds = CGRect(x: 0, y: 0, width: 1920, height: 1080)
         }
-        let visibleFrame = mainScreen.visibleFrame
-        let backingScale = mainScreen.backingScaleFactor
-        let screenMinX = visibleFrame.origin.x
-        let screenMinY = visibleFrame.origin.y
-        let screenW = visibleFrame.width
-        let screenH = visibleFrame.height
-        var px = x * screenW + screenMinX
-        var py = (1.0 - y) * screenH + screenMinY
-        for screen in screens {
-            let frame = screen.visibleFrame
-            if px >= frame.minX && px <= frame.maxX && py >= frame.minY && py <= frame.maxY {
-                let scale = screen.backingScaleFactor
-                if scale != backingScale {
-                    px = frame.minX + (px - frame.minX) * (scale / backingScale)
-                    py = frame.minY + (py - frame.minY) * (scale / backingScale)
-                }
-                break
-            }
-        }
-        let minX = screens.map(\.visibleFrame.minX).min() ?? 0
-        let maxX = screens.map(\.visibleFrame.maxX).max() ?? screenW
-        let minY = screens.map(\.visibleFrame.minY).min() ?? 0
-        let maxY = screens.map(\.visibleFrame.maxY).max() ?? screenH
-        px = Swift.max(minX, Swift.min(px, maxX))
-        py = Swift.max(minY, Swift.min(py, maxY))
-        return CGPoint(x: px * backingScale, y: py * backingScale)
+
+        let screenW = bounds.width
+        let screenH = bounds.height
+        let screenMinX = bounds.origin.x
+        let screenMinY = bounds.origin.y
+
+        let px = x * screenW + screenMinX
+        let py = (1.0 - y) * screenH + screenMinY
+        return CGPoint(x: px, y: py)
     }
 
     // MARK: - Helpers
