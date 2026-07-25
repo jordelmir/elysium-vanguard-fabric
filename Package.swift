@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "ElysiumVanguardFabric",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v12)
     ],
     products: [
         .executable(name: "VanguardNodeMac", targets: ["VanguardNodeMac"]),
@@ -44,7 +44,7 @@ let package = Package(
         ),
         .target(
             name: "VanguardTransport",
-            dependencies: ["VanguardDomain", "VanguardProtocol"],
+            dependencies: ["VanguardDomain", "VanguardProtocol", "VanguardIdentity"],
             path: "Packages/VanguardTransport/Sources/VanguardTransport"
         ),
         .target(
