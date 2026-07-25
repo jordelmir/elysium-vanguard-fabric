@@ -359,3 +359,13 @@ public struct ErrorPayload: Codable, Sendable {
         self.relatedOperationID = relatedOperationID
     }
 }
+
+public struct FlowControlAckPayload: Codable, Sendable {
+    public let channel: UInt8
+    public let bytesReceived: UInt32
+
+    public init(channel: UInt8, bytesReceived: UInt32) {
+        self.channel = channel
+        self.bytesReceived = bytesReceived
+    }
+}

@@ -34,6 +34,7 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case videoConfiguration = 0x0100
     case videoFrame = 0x0101
     case videoKeyframeRequest = 0x0102
+    case videoAccessUnit = 0x0103
     case inputEvent = 0x0200
     case terminalOpen = 0x0300
     case terminalOpened = 0x0301
@@ -44,6 +45,7 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case telemetrySnapshot = 0x0400
     case error = 0x0FFF
     case auditEvent = 0x0500
+    case flowControlAck = 0x0600
 }
 
 // MARK: - Message Flags
