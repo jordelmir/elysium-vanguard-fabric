@@ -183,7 +183,7 @@ private final class MockPermissionService: PermissionService, @unchecked Sendabl
 private final class MockCaptureService: ScreenCaptureService, @unchecked Sendable {
     var stateUpdates: AsyncStream<CaptureState> { AsyncStream { $0.yield(.idle) } }
     func availableSources() async throws -> [CaptureSource] { [] }
-    func startCapture(source: CaptureSource, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<Data, Error> {
+    func startCapture(source: CaptureSource, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<CapturedVideoFrame, Error> {
         AsyncThrowingStream { $0.finish() }
     }
     func stopCapture() async {}
@@ -191,10 +191,18 @@ private final class MockCaptureService: ScreenCaptureService, @unchecked Sendabl
 
 private final class MockEncoderService: VideoEncoderService, @unchecked Sendable {
     func configure(width: Int, height: Int, fps: Int, bitrate: Int) async throws {}
-    func encodeFrame(_ frame: Data, width: Int, height: Int) async throws -> EncodedVideoFrame {
-        EncodedVideoFrame(frameID: 0, presentationTimestampNanos: 0, isKeyframe: true, codecConfigurationRevision: 1, payload: Data())
+    func encode(_ frame: CapturedVideoFrame) async throws -> EncodedVideoOutput {
+        .accessUnit(EncodedVideoAccessUnit(
+            frameID: 0,
+            presentationTimestampNanos: 0,
+            durationNanos: 33_333_333,
+            isKeyframe: true,
+            configurationRevision: 1,
+            avccPayload: Data()
+        ))
     }
-    func requestKeyframe() async {}
+    func requestKeyframe() {}
+    func updateBitrate(_ bitrate: Int) async throws {}
     func reset() async {}
 }
 
@@ -203,11 +211,12 @@ private final class MockInputService: InputDispatchService, @unchecked Sendable 
     func releaseAllKeys() async {}
     func isAccessibilityAuthorized() async -> Bool { true }
     func requestAccessibility() async -> Bool { true }
+    func setCapturedDisplayID(_ displayID: CGDirectDisplayID) {}
 }
 
 private final class MockTerminalService: TerminalService, @unchecked Sendable {
-    func open(configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
-        TerminalSessionHandle(sessionID: TerminalSessionID(), pid: 1234, state: .open)
+    func open(sessionID: TerminalSessionID, configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
+        TerminalSessionHandle(sessionID: sessionID, pid: 1234, state: .open)
     }
     func write(sessionID: TerminalSessionID, data: Data) async throws {}
     func resize(sessionID: TerminalSessionID, columns: UInt16, rows: UInt16) async throws {}
@@ -218,10 +227,20 @@ private final class MockTerminalService: TerminalService, @unchecked Sendable {
 }
 
 private final class MockDecoderService: VideoDecoderService, @unchecked Sendable {
-    func configure(codecConfiguration: Data) async throws {}
-    func decodeFrame(_ frame: EncodedVideoFrame) async throws -> DecodedVideoFrame {
-        DecodedVideoFrame(frameID: frame.frameID, width: 1920, height: 1080)
+    func configure(sps: Data, pps: Data, width: Int, height: Int) async throws {}
+    func decode(_ accessUnit: EncodedVideoAccessUnit) async throws -> DecodedVideoFrame {
+        let attrs: [String: Any] = [
+            kCVPixelBufferWidthKey as String: 1920,
+            kCVPixelBufferHeightKey as String: 1080,
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 1920, 1080, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pixelBuffer)
+        return DecodedVideoFrame(
+            frameID: accessUnit.frameID,
+            presentationTimestampNanos: accessUnit.presentationTimestampNanos,
+            pixelBuffer: pixelBuffer!
+        )
     }
-    func getLastDecodedPixelBuffer() async -> CVPixelBuffer? { nil }
     func reset() async {}
 }
