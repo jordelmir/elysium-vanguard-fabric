@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import CoreVideo
 import VanguardDomain
 import VanguardProtocol
 import VanguardDiscovery
@@ -135,20 +136,39 @@ public final class ConsoleAppState: ObservableObject {
                 port: node.advertisement.endpoint.port,
                 useTLS: true
             )
-            let discoveryService = BonjourDiscoveryService()
-            let localIdentityService = CryptoKitIdentityService()
-            self.identityService = localIdentityService
-            let permissionService = MacOSPermissionService()
-            let terminalService = POSIXTerminalService()
 
-            coordinator = ConsoleSessionCoordinator(
-                discoveryService: discoveryService,
-                transport: transport,
-                identityService: localIdentityService,
-                permissionService: permissionService,
-                terminalService: terminalService,
-                decoderService: VideoToolboxDecoder()
-            )
+            if coordinator == nil {
+                let discoveryService = BonjourDiscoveryService()
+                let localIdentityService = CryptoKitIdentityService()
+                self.identityService = localIdentityService
+                let permissionService = MacOSPermissionService()
+                let terminalService = POSIXTerminalService()
+
+                coordinator = ConsoleSessionCoordinator(
+                    discoveryService: discoveryService,
+                    transport: transport,
+                    identityService: localIdentityService,
+                    permissionService: permissionService,
+                    terminalService: terminalService,
+                    decoderService: VideoToolboxDecoder()
+                )
+            } else {
+                try await coordinator?.disconnect()
+                let discoveryService = BonjourDiscoveryService()
+                let localIdentityService = CryptoKitIdentityService()
+                self.identityService = localIdentityService
+                let permissionService = MacOSPermissionService()
+                let terminalService = POSIXTerminalService()
+
+                coordinator = ConsoleSessionCoordinator(
+                    discoveryService: discoveryService,
+                    transport: transport,
+                    identityService: localIdentityService,
+                    permissionService: permissionService,
+                    terminalService: terminalService,
+                    decoderService: VideoToolboxDecoder()
+                )
+            }
             try await coordinator?.connect(to: node.advertisement)
             isConnected = true
             connectedNodeName = node.name
@@ -209,7 +229,7 @@ public final class ConsoleAppState: ObservableObject {
         try await coordinator.sendInputEvent(event)
     }
 
-    public var frameUpdates: AsyncThrowingStream<Data, Error> {
+    public var frameUpdates: AsyncThrowingStream<SendablePixelBuffer, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 guard let coordinator = coordinator else { return }

@@ -70,37 +70,54 @@ public actor PipelineCoordinator {
         captureTask = Task { [weak self] in
             guard let self else { return }
             do {
-                for try await frameData in stream {
+                for try await capturedFrame in stream {
                     guard !Task.isCancelled else { break }
                     let start = CFAbsoluteTimeGetCurrent()
 
-                    let encoded = try await encoder.encodeFrame(
-                        frameData,
-                        width: min(source.width, configuration.maxWidth),
-                        height: min(source.height, configuration.maxHeight)
-                    )
+                    let output = try await encoder.encode(capturedFrame)
 
                     let encodeTime = CFAbsoluteTimeGetCurrent() - start
                     await self.recordEncodeTime(encodeTime)
                     await self.incrementFramesEncoded()
 
-                    let payload = try JSONEncoder().encode(EncodedVideoFramePayload(
-                        frameID: encoded.frameID,
-                        timestampNanos: encoded.presentationTimestampNanos,
-                        isKeyframe: encoded.isKeyframe,
-                        configRevision: encoded.codecConfigurationRevision,
-                        data: encoded.payload
-                    ))
+                    switch output {
+                    case .configuration(let config):
+                        let payload = try JSONEncoder().encode(config)
+                        let message = OutboundMessage(
+                            messageType: .videoConfiguration,
+                            streamChannel: .video,
+                            payload: payload
+                        )
+                        try await transport.send(message)
 
-                    let message = OutboundMessage(
-                        messageType: .videoFrame,
-                        streamChannel: .video,
-                        payload: payload
-                    )
-                    try await transport.send(message)
+                    case .accessUnit(let au):
+                        let payload = try JSONEncoder().encode(au)
+                        let message = OutboundMessage(
+                            messageType: .videoAccessUnit,
+                            streamChannel: .video,
+                            payload: payload
+                        )
+                        try await transport.send(message)
+
+                    case .configurationAndAccessUnit(let config, let au):
+                        let configPayload = try JSONEncoder().encode(config)
+                        let configMsg = OutboundMessage(
+                            messageType: .videoConfiguration,
+                            streamChannel: .video,
+                            payload: configPayload
+                        )
+                        try await transport.send(configMsg)
+
+                        let auPayload = try JSONEncoder().encode(au)
+                        let auMsg = OutboundMessage(
+                            messageType: .videoAccessUnit,
+                            streamChannel: .video,
+                            payload: auPayload
+                        )
+                        try await transport.send(auMsg)
+                    }
                 }
             } catch is CancellationError {
-                // Pipeline stopped
             } catch {
                 self.logger.error("Capture pipeline error: \(error.localizedDescription)")
             }
@@ -149,31 +166,39 @@ public actor PipelineCoordinator {
         let start = CFAbsoluteTimeGetCurrent()
 
         do {
-            let framePayload = try JSONDecoder().decode(EncodedVideoFramePayload.self, from: payload)
+            let auPayload = try JSONDecoder().decode(VideoAccessUnitPayload.self, from: payload)
 
-            let encodedFrame = EncodedVideoFrame(
-                frameID: framePayload.frameID,
-                presentationTimestampNanos: framePayload.timestampNanos,
-                isKeyframe: framePayload.isKeyframe,
-                codecConfigurationRevision: framePayload.configRevision,
-                payload: framePayload.data
+            let accessUnit = EncodedVideoAccessUnit(
+                frameID: auPayload.frameID,
+                presentationTimestampNanos: auPayload.presentationTimestampNanos,
+                durationNanos: auPayload.durationNanos,
+                isKeyframe: auPayload.isKeyframe,
+                configurationRevision: auPayload.configurationRevision,
+                avccPayload: auPayload.avccData
             )
 
-            _ = try await decoder.decodeFrame(encodedFrame)
+            let decoded = try await decoder.decode(accessUnit)
             await incrementFramesDecoded()
 
             let decodeTime = CFAbsoluteTimeGetCurrent() - start
             await recordDecodeTime(decodeTime)
 
-            if let pixelBuffer = await decoder.getLastDecodedPixelBuffer() {
-                try? await renderer.renderPixelBuffer(pixelBuffer)
-                await incrementFramesRendered()
+            try? await renderer.renderPixelBuffer(decoded.pixelBuffer)
+            await incrementFramesRendered()
 
-                let renderLatency = CFAbsoluteTimeGetCurrent() - start
-                await recordRenderLatency(renderLatency)
-            }
+            let renderLatency = CFAbsoluteTimeGetCurrent() - start
+            await recordRenderLatency(renderLatency)
         } catch {
             logger.error("Failed to handle incoming frame: \(error.localizedDescription)")
+        }
+    }
+
+    public func handleIncomingConfiguration(_ payload: Data) async {
+        do {
+            let config = try JSONDecoder().decode(VideoCodecConfigurationPayload.self, from: payload)
+            try await decoder.configure(sps: config.sps, pps: config.pps, width: Int(config.width), height: Int(config.height))
+        } catch {
+            logger.error("Failed to configure decoder: \(error.localizedDescription)")
         }
     }
 

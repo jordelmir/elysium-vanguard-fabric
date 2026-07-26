@@ -249,8 +249,8 @@ final class FlowControllerTests: XCTestCase {
 
     func testBackpressure() {
         let fc = FlowController()
-        fc.didSend(channel: .video, size: 4 * 1024 * 1024)
-        XCTAssertFalse(fc.canSend(channel: .video, size: 1))
+        fc.didSend(channel: .control, size: 256 * 1024)
+        XCTAssertFalse(fc.canSend(channel: .control, size: 1))
     }
 
     func testAckReleasesBackpressure() {

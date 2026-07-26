@@ -12,11 +12,13 @@ final class POSIXTerminalServiceTests: XCTestCase {
             columns: 80,
             rows: 24
         )
+        let sessionID = TerminalSessionID()
 
         do {
-            let handle = try await service.open(configuration: config)
+            let handle = try await service.open(sessionID: sessionID, configuration: config)
             XCTAssertGreaterThan(handle.pid, 0)
             XCTAssertEqual(handle.state, .open)
+            XCTAssertEqual(handle.sessionID, sessionID)
             await service.close(sessionID: handle.sessionID, signal: .hangup)
         } catch {
             XCTFail("Open terminal failed: \(error)")
@@ -30,9 +32,10 @@ final class POSIXTerminalServiceTests: XCTestCase {
             columns: 80,
             rows: 24
         )
+        let sessionID = TerminalSessionID()
 
         do {
-            let handle = try await service.open(configuration: config)
+            let handle = try await service.open(sessionID: sessionID, configuration: config)
             let echoCommand = "echo hello\n"
             try await service.write(sessionID: handle.sessionID, data: Data(echoCommand.utf8))
             try? await Task.sleep(nanoseconds: 200_000_000)
@@ -49,9 +52,10 @@ final class POSIXTerminalServiceTests: XCTestCase {
             columns: 80,
             rows: 24
         )
+        let sessionID = TerminalSessionID()
 
         do {
-            let handle = try await service.open(configuration: config)
+            let handle = try await service.open(sessionID: sessionID, configuration: config)
             try await service.resize(sessionID: handle.sessionID, columns: 120, rows: 40)
             await service.close(sessionID: handle.sessionID, signal: .hangup)
         } catch {
@@ -66,9 +70,10 @@ final class POSIXTerminalServiceTests: XCTestCase {
             columns: 80,
             rows: 24
         )
+        let sessionID = TerminalSessionID()
 
         do {
-            let handle = try await service.open(configuration: config)
+            let handle = try await service.open(sessionID: sessionID, configuration: config)
             let output = service.getOutput(sessionID: handle.sessionID, fromOffset: 0)
             var receivedData = Data()
             for try await data in output {
@@ -88,9 +93,10 @@ final class POSIXTerminalServiceTests: XCTestCase {
             columns: 80,
             rows: 24
         )
+        let sessionID = TerminalSessionID()
 
         do {
-            let handle = try await service.open(configuration: config)
+            let handle = try await service.open(sessionID: sessionID, configuration: config)
             await service.close(sessionID: handle.sessionID, signal: .hangup)
             try? await Task.sleep(nanoseconds: 100_000_000)
         } catch {

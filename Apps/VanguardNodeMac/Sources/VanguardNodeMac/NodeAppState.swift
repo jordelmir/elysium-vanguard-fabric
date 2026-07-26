@@ -79,6 +79,11 @@ public final class NodeAppState: ObservableObject {
         AppLogger.info(.node, "Starting node...")
         statusMessage = "Starting..."
 
+        guard #available(macOS 12.3, *) else {
+            statusMessage = "Requires macOS 12.3+"
+            return
+        }
+
         do {
             let discoveryService = BonjourDiscoveryService()
             let identityService = CryptoKitIdentityService()
@@ -174,6 +179,9 @@ public final class NodeAppState: ObservableObject {
                     timestamp: Date()
                 )
                 statusMessage = "Pairing — code: \(code)"
+            case .codeValidated(let nodeID):
+                connectedConsole = nodeID.rawValue.uuidString.prefix(8).description
+                statusMessage = "Code validated — ready to approve"
             case .connected(let nodeID):
                 connectedConsole = nodeID.rawValue.uuidString.prefix(8).description
                 statusMessage = "Connected"

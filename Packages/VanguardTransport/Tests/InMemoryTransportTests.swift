@@ -39,7 +39,7 @@ final class InMemoryTransportTests: XCTestCase {
             try await transport.send(message)
             XCTFail("Expected error")
         } catch {
-            XCTAssertTrue(error is TransportError)
+            XCTAssertTrue(error is NWTransportError)
         }
     }
 

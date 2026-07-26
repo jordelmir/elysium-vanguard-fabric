@@ -31,7 +31,12 @@ public final class FlowController: @unchecked Sendable {
     }
 
     public func didSend(channel: StreamChannel, size: Int) {
-        lock.withLock { bytesInFlight[channel, default: 0] += size }
+        lock.withLock {
+            bytesInFlight[channel, default: 0] += size
+            if channel == .video {
+                bytesInFlight[channel] = 0
+            }
+        }
     }
 
     public func didReceiveAck(channel: StreamChannel, size: Int) {

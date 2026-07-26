@@ -27,7 +27,7 @@ final class SecurityServiceTests: XCTestCase {
     }
 
     func testNodeAction() {
-        let actions: [NodeAction] = [
+        let actions: [SecurityAction] = [
             .startScreenCapture,
             .openTerminal,
             .executeProcess(command: "ls"),

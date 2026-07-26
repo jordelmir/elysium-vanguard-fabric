@@ -24,10 +24,11 @@ public enum CapturePreset {
 public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureService, SCStreamOutput, @unchecked Sendable {
     private let lock = NSLock()
     private var _stream: SCStream?
-    private var _frameContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    private var _frameContinuation: AsyncThrowingStream<CapturedVideoFrame, Error>.Continuation?
     private var _currentState: CaptureState = .idle
     private var _stateContinuation: AsyncStream<CaptureState>.Continuation?
     private var _frameCount: UInt64 = 0
+    private var _selectedDisplayID: CGDirectDisplayID = 0
 
     public override init() { super.init() }
 
@@ -59,7 +60,7 @@ public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureServic
         return content.displays
     }
 
-    private func makeStream(source: CaptureSource, configuration: CaptureConfiguration) async throws -> (filter: SCContentFilter, config: SCStreamConfiguration, stream: SCStream) {
+    private func makeStream(source: CaptureSource, configuration: CaptureConfiguration) async throws -> (filter: SCContentFilter, config: SCStreamConfiguration, stream: SCStream, displayID: CGDirectDisplayID) {
         guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionDenied }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID.description == source.id }) ?? content.displays.first else {
@@ -72,13 +73,19 @@ public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureServic
         streamConfig.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(configuration.fps))
         streamConfig.queueDepth = 3
         streamConfig.showsCursor = configuration.includeCursor
-        return (filter, streamConfig, SCStream(filter: filter, configuration: streamConfig, delegate: nil))
+        return (filter, streamConfig, SCStream(filter: filter, configuration: streamConfig, delegate: nil), display.displayID)
     }
 
-    public func startCapture(source: CaptureSource, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<Data, Error> {
-        let (_, _, stream) = try await makeStream(source: source, configuration: configuration)
-        let (streamAsync, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
-        lock.withLock { self._frameContinuation = continuation; self._frameCount = 0 }
+    public func startCapture(source: CaptureSource, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<CapturedVideoFrame, Error> {
+        let (_, _, stream, displayID) = try await makeStream(source: source, configuration: configuration)
+        let (streamAsync, continuation) = AsyncThrowingStream<CapturedVideoFrame, Error>.makeStream(
+            bufferingPolicy: .bufferingNewest(2)
+        )
+        lock.withLock {
+            self._frameContinuation = continuation
+            self._frameCount = 0
+            self._selectedDisplayID = displayID
+        }
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
         try await stream.startCapture()
         lock.withLock { self._stream = stream }
@@ -89,21 +96,26 @@ public final class ScreenCaptureKitCaptureService: NSObject, ScreenCaptureServic
     public func stopCapture() async {
         let streamToStop: SCStream? = lock.withLock { let s = _stream; _stream = nil; return s }
         if let stream = streamToStop { try? await stream.stopCapture() }
-        let dc: AsyncThrowingStream<Data, Error>.Continuation? = lock.withLock { let c = _frameContinuation; _frameContinuation = nil; return c }
+        let dc: AsyncThrowingStream<CapturedVideoFrame, Error>.Continuation? = lock.withLock { let c = _frameContinuation; _frameContinuation = nil; return c }
         dc?.finish()
         updateState(.stopped)
     }
 
     nonisolated public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid, let imageBuffer = sampleBuffer.imageBuffer else { return }
+        guard type == .screen, sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        guard let imageBuffer = sampleBuffer.imageBuffer else { return }
 
-        CVPixelBufferLockBaseAddress(imageBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(imageBuffer, .readOnly) }
-        let baseAddress = CVPixelBufferGetBaseAddress(imageBuffer)
-        guard let baseAddress else { return }
-        let data = Data(bytes: baseAddress, count: CVPixelBufferGetHeight(imageBuffer) * CVPixelBufferGetBytesPerRow(imageBuffer))
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+
+        let displayID: CGDirectDisplayID = lock.withLock { self._selectedDisplayID }
+
+        let frame = CapturedVideoFrame(
+            pixelBuffer: imageBuffer,
+            presentationTimeStamp: pts,
+            displayID: displayID
+        )
 
         let continuation = self.lock.withLock { self._frameContinuation }
-        continuation?.yield(data)
+        continuation?.yield(frame)
     }
 }

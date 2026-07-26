@@ -31,6 +31,15 @@ let package = Package(
         .library(name: "VanguardRender", targets: ["VanguardRender"]),
         .library(name: "VanguardTestSupport", targets: ["VanguardTestSupport"]),
         .library(name: "VanguardUI", targets: ["VanguardUI"]),
+        .library(name: "VanguardArtifacts", targets: ["VanguardArtifacts"]),
+        .library(name: "VanguardCompute", targets: ["VanguardCompute"]),
+        .library(name: "VanguardScheduler", targets: ["VanguardScheduler"]),
+        .library(name: "VanguardWorkspace", targets: ["VanguardWorkspace"]),
+        .library(name: "VanguardExecutors", targets: ["VanguardExecutors"]),
+        .library(name: "VanguardAgents", targets: ["VanguardAgents"]),
+        .library(name: "VanguardPolicy", targets: ["VanguardPolicy"]),
+        .library(name: "VanguardObservability", targets: ["VanguardObservability"]),
+        .library(name: "VanguardUpdates", targets: ["VanguardUpdates"]),
     ],
     targets: [
         .target(
@@ -181,6 +190,86 @@ let package = Package(
                 "VanguardPermissions",
             ],
             path: "Packages/VanguardTestSupport/Sources/VanguardTestSupport"
+        ),
+        .target(
+            name: "VanguardArtifacts",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardArtifacts/Sources/VanguardArtifacts"
+        ),
+        .testTarget(
+            name: "VanguardArtifactsTests",
+            dependencies: ["VanguardArtifacts", "VanguardTestSupport"],
+            path: "Packages/VanguardArtifacts/Tests"
+        ),
+        .target(
+            name: "VanguardCompute",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardCompute/Sources/VanguardCompute"
+        ),
+        .testTarget(
+            name: "VanguardComputeTests",
+            dependencies: ["VanguardCompute", "VanguardTestSupport"],
+            path: "Packages/VanguardCompute/Tests"
+        ),
+        .target(
+            name: "VanguardScheduler",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardScheduler/Sources/VanguardScheduler"
+        ),
+        .testTarget(
+            name: "VanguardSchedulerTests",
+            dependencies: ["VanguardScheduler", "VanguardTestSupport"],
+            path: "Packages/VanguardScheduler/Tests"
+        ),
+        .target(
+            name: "VanguardWorkspace",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardWorkspace/Sources/VanguardWorkspace"
+        ),
+        .testTarget(
+            name: "VanguardWorkspaceTests",
+            dependencies: ["VanguardWorkspace", "VanguardTestSupport"],
+            path: "Packages/VanguardWorkspace/Tests"
+        ),
+        .target(
+            name: "VanguardExecutors",
+            dependencies: ["VanguardDomain", "VanguardCompute"],
+            path: "Packages/VanguardExecutors/Sources/VanguardExecutors"
+        ),
+        .target(
+            name: "VanguardAgents",
+            dependencies: ["VanguardDomain", "VanguardCompute"],
+            path: "Packages/VanguardAgents/Sources/VanguardAgents"
+        ),
+        .testTarget(
+            name: "VanguardAgentsTests",
+            dependencies: ["VanguardAgents", "VanguardTestSupport"],
+            path: "Packages/VanguardAgents/Tests"
+        ),
+        .target(
+            name: "VanguardPolicy",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardPolicy/Sources/VanguardPolicy"
+        ),
+        .target(
+            name: "VanguardObservability",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardObservability/Sources/VanguardObservability"
+        ),
+        .testTarget(
+            name: "VanguardObservabilityTests",
+            dependencies: ["VanguardObservability", "VanguardTestSupport"],
+            path: "Packages/VanguardObservability/Tests"
+        ),
+        .target(
+            name: "VanguardUpdates",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardUpdates/Sources/VanguardUpdates"
+        ),
+        .testTarget(
+            name: "VanguardUpdatesTests",
+            dependencies: ["VanguardUpdates", "VanguardTestSupport"],
+            path: "Packages/VanguardUpdates/Tests"
         ),
 
         // Tests

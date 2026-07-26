@@ -5,12 +5,20 @@ public struct CursorGlowModifier: ViewModifier {
     public var color: Color
     public init(color: Color = DS.Colors.accent) { self.color = color }
     public func body(content: Content) -> some View {
-        content
-            .onContinuousHover { phase in if case .active(let loc) = phase { withAnimation(.easeOut(duration: 0.15)) { location = loc } } }
-            .overlay(GeometryReader { geo in
-                RadialGradient(colors: [color.opacity(0.12), Color.clear], center: .init(x: location.x / geo.size.width, y: location.y / geo.size.height), startRadius: 0, endRadius: 150)
-                    .blendMode(.screen).allowsHitTesting(false)
-            })
+        if #available(macOS 14.0, *) {
+            content
+                .onContinuousHover { phase in if case .active(let loc) = phase { withAnimation(.easeOut(duration: 0.15)) { location = loc } } }
+                .overlay(GeometryReader { geo in
+                    RadialGradient(colors: [color.opacity(0.12), Color.clear], center: .init(x: location.x / geo.size.width, y: location.y / geo.size.height), startRadius: 0, endRadius: 150)
+                        .blendMode(.screen).allowsHitTesting(false)
+                })
+        } else {
+            content
+                .overlay(GeometryReader { geo in
+                    RadialGradient(colors: [color.opacity(0.08), Color.clear], center: .center, startRadius: 0, endRadius: 150)
+                        .blendMode(.screen).allowsHitTesting(false)
+                })
+        }
     }
 }
 
@@ -19,13 +27,17 @@ public struct MagneticModifier: ViewModifier {
     public var strength: CGFloat
     public init(strength: CGFloat = 8) { self.strength = strength }
     public func body(content: Content) -> some View {
-        content.offset(offset)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let loc): withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { offset = CGSize(width: (loc.x - 0.5) * strength, height: (loc.y - 0.5) * strength) }
-                case .ended: withAnimation(.spring(response: 0.4, dampingFraction: 0.5)) { offset = .zero }
+        if #available(macOS 14.0, *) {
+            content.offset(offset)
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let loc): withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { offset = CGSize(width: (loc.x - 0.5) * strength, height: (loc.y - 0.5) * strength) }
+                    case .ended: withAnimation(.spring(response: 0.4, dampingFraction: 0.5)) { offset = .zero }
+                    }
                 }
-            }
+        } else {
+            content
+        }
     }
 }
 
@@ -41,7 +53,13 @@ public struct BreathingGlowModifier: ViewModifier {
 }
 
 public extension View {
-    func cursorGlow(_ color: Color = DS.Colors.accent) -> some View { modifier(CursorGlowModifier(color: color)) }
-    func magnetic(strength: CGFloat = 8) -> some View { modifier(MagneticModifier(strength: strength)) }
-    func breathingGlow(_ color: Color = DS.Colors.accent) -> some View { modifier(BreathingGlowModifier(color: color)) }
+    func cursorGlow(color: Color = DS.Colors.accent) -> some View {
+        modifier(CursorGlowModifier(color: color))
+    }
+    func magnetic(strength: CGFloat = 8) -> some View {
+        modifier(MagneticModifier(strength: strength))
+    }
+    func breathingGlow(color: Color = DS.Colors.accent) -> some View {
+        modifier(BreathingGlowModifier(color: color))
+    }
 }

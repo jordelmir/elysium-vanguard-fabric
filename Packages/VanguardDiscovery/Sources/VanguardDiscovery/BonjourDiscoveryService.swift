@@ -2,16 +2,28 @@ import Foundation
 import Network
 import VanguardDomain
 
-// MARK: - Bonjour Discovery Service (macOS implementation)
+// MARK: - Discovered Node Endpoint (wraps NWEndpoint for transport)
+
+public struct DiscoveredNodeEndpoint: @unchecked Sendable {
+    public let advertisement: NodeAdvertisement
+    public let networkEndpoint: NWEndpoint
+
+    public init(advertisement: NodeAdvertisement, networkEndpoint: NWEndpoint) {
+        self.advertisement = advertisement
+        self.networkEndpoint = networkEndpoint
+    }
+}
+
+// MARK: - Bonjour Discovery Service
 
 public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendable {
     private var browser: NWBrowser?
-    private var listener: NWListener?
-    private var discoveredNodes: [Data: NodeAdvertisement] = [:]
     private let configuration: DiscoveryConfiguration
-    private var isPublishing = false
     private var isBrowsing = false
     private let state: ManagedState
+
+    private var resolvedEndpoints: [Data: NWEndpoint] = [:]
+    private var discoveredNodes: [Data: NodeAdvertisement] = [:]
 
     public init(configuration: DiscoveryConfiguration = .default) {
         self.configuration = configuration
@@ -21,23 +33,17 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
     public var stateUpdates: AsyncThrowingStream<DiscoveryState, Error> {
         let stateRef = self.state
         return AsyncThrowingStream { continuation in
-            Task {
-                await stateRef.setContinuation(continuation)
-            }
+            Task { await stateRef.setContinuation(continuation) }
             continuation.onTermination = { @Sendable _ in
-                Task {
-                    await stateRef.continuationFinished()
-                }
+                Task { await stateRef.continuationFinished() }
             }
         }
     }
 
-    // MARK: - Browse for nodes
+    // MARK: - Browse
 
     public func startBrowsing() async throws {
-        guard !isBrowsing else {
-            throw DiscoveryError.alreadyDiscovering
-        }
+        guard !isBrowsing else { throw DiscoveryError.alreadyDiscovering }
 
         let params = NWParameters()
         params.includePeerToPeer = true
@@ -46,12 +52,6 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
             for: .bonjour(type: configuration.serviceType, domain: nil),
             using: params
         )
-
-        browser.stateUpdateHandler = { [weak self] browserState in
-            guard self != nil else { return }
-            Task { @Sendable in
-            }
-        }
 
         browser.browseResultsChangedHandler = { [weak self] results, changes in
             guard let self else { return }
@@ -71,40 +71,21 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
         browser = nil
         isBrowsing = false
         discoveredNodes.removeAll()
+        resolvedEndpoints.removeAll()
     }
 
-    // MARK: - Publish node
+    // MARK: - Publish (Node uses transport for Bonjour, stub for protocol conformance)
 
     public func publishAdvertisement(_ advertisement: NodeAdvertisement) async throws {
-        guard let port = NWEndpoint.Port(rawValue: advertisement.endpoint.port) else {
-            throw DiscoveryError.advertisementMalformed
-        }
-
-        let listener = try NWListener(using: NWParameters(tls: .none), on: port)
-
-        listener.service = NWListener.Service(
-            name: advertisement.displayName,
-            type: configuration.serviceType
-        )
-
-        listener.stateUpdateHandler = { [weak self] listenerState in
-            guard self != nil else { return }
-            Task { @Sendable in
-            }
-        }
-
-        self.listener = listener
-        self.isPublishing = true
-        listener.start(queue: .global(qos: .userInitiated))
+        // Node publishes Bonjour via the transport's listener, not here.
+        // This is a no-op. The transport handles Bonjour advertisement.
     }
 
     public func unpublish() async {
-        listener?.cancel()
-        listener = nil
-        isPublishing = false
+        // No-op — transport owns the listener lifecycle.
     }
 
-    // MARK: - Handle results
+    // MARK: - Results
 
     private func handleBrowseResults(
         _ results: Set<NWBrowser.Result>,
@@ -113,16 +94,12 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
         for change in changes {
             switch change {
             case .added(let result):
-                if let ad = parseAdvertisement(from: result) {
-                    let nodeIDHash = ad.nodeIDHash
-                    discoveredNodes[nodeIDHash] = ad
-                    await state.emit(.nodeFound(ad))
-                }
+                await processResult(result, isUpdate: false)
             case .removed(let result):
-                let endpoint = result.endpoint
-                if case .service(let name, _, _, _) = endpoint {
+                if case .service(let name, _, _, _) = result.endpoint {
                     let hashData = Data(name.utf8)
                     discoveredNodes.removeValue(forKey: hashData)
+                    resolvedEndpoints.removeValue(forKey: hashData)
                     await state.emit(.nodeLost(nodeIDHash: hashData))
                 }
             case .identical:
@@ -133,33 +110,40 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
         }
 
         for result in results {
-            if let ad = parseAdvertisement(from: result) {
-                let nodeIDHash = ad.nodeIDHash
-                if let existing = discoveredNodes[nodeIDHash] {
-                    if existing != ad {
-                        discoveredNodes[nodeIDHash] = ad
-                        await state.emit(.nodeUpdated(ad))
-                    }
-                } else {
-                    discoveredNodes[nodeIDHash] = ad
-                    await state.emit(.nodeFound(ad))
-                }
-            }
+            await processResult(result, isUpdate: true)
         }
     }
 
-    // MARK: - TXT Record
+    private func processResult(_ result: NWBrowser.Result, isUpdate: Bool) async {
+        guard let ad = parseAdvertisement(from: result) else { return }
+        let nodeIDHash = ad.nodeIDHash
 
-    private func buildTXTRecord(from ad: NodeAdvertisement) throws -> NWTXTRecord {
-        var record = NWTXTRecord()
-        record["pv"] = ad.protocolVersion.description
-        record["arch"] = ad.architecture.rawValue
-        record["os"] = ad.osFamily.rawValue
-        record["osv"] = ad.osVersion
-        record["pair"] = ad.pairingState.rawValue
-        record["nh"] = ad.nodeIDHash.base64EncodedString()
-        return record
+        if let existing = discoveredNodes[nodeIDHash] {
+            if existing != ad {
+                discoveredNodes[nodeIDHash] = ad
+                resolvedEndpoints[nodeIDHash] = result.endpoint
+                await state.emit(.nodeUpdated(ad))
+            }
+        } else {
+            discoveredNodes[nodeIDHash] = ad
+            resolvedEndpoints[nodeIDHash] = result.endpoint
+            await state.emit(.nodeFound(ad))
+        }
     }
+
+    // MARK: - Get Resolved Endpoint
+
+    public func getResolvedEndpoint(for nodeIDHash: Data) -> NWEndpoint? {
+        resolvedEndpoints[nodeIDHash]
+    }
+
+    public func getDiscoveredNodeEndpoint(for nodeIDHash: Data) -> DiscoveredNodeEndpoint? {
+        guard let ad = discoveredNodes[nodeIDHash],
+              let endpoint = resolvedEndpoints[nodeIDHash] else { return nil }
+        return DiscoveredNodeEndpoint(advertisement: ad, networkEndpoint: endpoint)
+    }
+
+    // MARK: - TXT Record Parsing
 
     private func parseAdvertisement(from result: NWBrowser.Result) -> NodeAdvertisement? {
         guard case .bonjour(let txtRecord) = result.metadata else { return nil }
@@ -170,11 +154,9 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
         let osv = txtRecord["osv"] ?? "0.0"
         let pairRaw = txtRecord["pair"] ?? "untrusted"
         let nhBase64 = txtRecord["nh"] ?? ""
+        let displayName = resolveName(from: result.endpoint)
 
-        guard let host = resolveHost(from: result.endpoint),
-              let port = resolvePort(from: result.endpoint) else {
-            return nil
-        }
+        guard let port = resolvePort(from: result.endpoint) else { return nil }
 
         let components = pv.split(separator: ".")
         let major = UInt16(components.first.map(String.init) ?? "1") ?? 1
@@ -182,40 +164,22 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
 
         return NodeAdvertisement(
             nodeIDHash: Data(base64Encoded: nhBase64) ?? Data(),
-            displayName: resolveName(from: result.endpoint),
+            displayName: displayName,
             architecture: CPUArchitecture(rawValue: archRaw) ?? .unknown,
             osFamily: OSFamily(rawValue: osRaw) ?? .unknown,
             osVersion: osv,
             protocolVersion: ProtocolVersion(major: major, minor: minor),
             pairingState: TrustState(rawValue: pairRaw) ?? .untrusted,
-            endpoint: NodeEndpoint(host: host, port: port)
+            endpoint: NodeEndpoint(host: displayName, port: port)
         )
-    }
-
-    private func resolveHost(from endpoint: NWEndpoint) -> String? {
-        switch endpoint {
-        case .hostPort(let host, _):
-            switch host {
-            case .ipv4(let addr):
-                return addr.debugDescription
-            case .ipv6(let addr):
-                return addr.debugDescription
-            case .name(let name, _):
-                return name
-            @unknown default:
-                return nil
-            }
-        case .service(let name, _, _, _):
-            return name
-        default:
-            return nil
-        }
     }
 
     private func resolvePort(from endpoint: NWEndpoint) -> UInt16? {
         switch endpoint {
         case .hostPort(_, let port):
             return port.rawValue
+        case .service:
+            return nil
         default:
             return nil
         }
@@ -227,10 +191,8 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
             return name
         case .hostPort(let host, _):
             switch host {
-            case .name(let name, _):
-                return name
-            default:
-                return host.debugDescription
+            case .name(let name, _): return name
+            default: return host.debugDescription
             }
         default:
             return "Unknown"
@@ -238,7 +200,7 @@ public final class BonjourDiscoveryService: DiscoveryService, @unchecked Sendabl
     }
 }
 
-// MARK: - Managed State (actor for safe continuation access)
+// MARK: - Managed State
 
 private actor ManagedState {
     private var continuation: AsyncThrowingStream<DiscoveryState, Error>.Continuation?
@@ -247,11 +209,7 @@ private actor ManagedState {
         self.continuation = cont
     }
 
-    func continuationFinished() {
-        continuation = nil
-    }
+    func continuationFinished() { continuation = nil }
 
-    func emit(_ state: DiscoveryState) {
-        continuation?.yield(state)
-    }
+    func emit(_ state: DiscoveryState) { continuation?.yield(state) }
 }

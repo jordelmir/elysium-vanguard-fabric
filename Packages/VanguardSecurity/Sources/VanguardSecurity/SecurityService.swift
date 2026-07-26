@@ -5,7 +5,7 @@ import VanguardDomain
 
 public protocol SecurityService: Sendable {
     func authorize(
-        _ action: NodeAction,
+        _ action: SecurityAction,
         context: AuthorizationContext
     ) async throws -> AuthorizationDecision
     func checkCapability(
@@ -16,9 +16,9 @@ public protocol SecurityService: Sendable {
     func validatePayload(_ data: Data, maxPayloadSize: Int) async throws
 }
 
-// MARK: - Node Action
+// MARK: - Security Action
 
-public enum NodeAction: Sendable, Equatable {
+public enum SecurityAction: Sendable, Equatable {
     case startScreenCapture
     case startScreenControl
     case openTerminal

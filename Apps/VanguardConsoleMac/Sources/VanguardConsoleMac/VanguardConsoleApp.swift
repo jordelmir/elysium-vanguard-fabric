@@ -10,11 +10,13 @@ struct VanguardConsoleApp: App {
                 .environmentObject(consoleState)
         }
 
-        MenuBarExtra {
-            ConsoleMenuBarView()
-                .environmentObject(consoleState)
-        } label: {
-            Label("Elysium Console", systemImage: consoleState.isScanning ? "antenna.radiowaves.left.and.right" : "display")
+        if #available(macOS 13.0, *) {
+            MenuBarExtra {
+                ConsoleMenuBarView()
+                    .environmentObject(consoleState)
+            } label: {
+                Label("Elysium Console", systemImage: consoleState.isScanning ? "antenna.radiowaves.left.and.right" : "display")
+            }
         }
     }
 }

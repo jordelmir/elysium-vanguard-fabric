@@ -42,6 +42,8 @@ public struct TrustedPeer: Codable, Sendable, Equatable {
     public let certificateFingerprint: Data
     public let grantedCapabilities: Set<NodeCapability>
     public let pairedAt: Date
+    public let lastSeenAt: Date?
+    public let trustStatus: TrustStatus
     public let revokedAt: Date?
 
     public init(
@@ -51,6 +53,8 @@ public struct TrustedPeer: Codable, Sendable, Equatable {
         certificateFingerprint: Data,
         grantedCapabilities: Set<NodeCapability>,
         pairedAt: Date,
+        lastSeenAt: Date? = nil,
+        trustStatus: TrustStatus = .trusted,
         revokedAt: Date? = nil
     ) {
         self.nodeID = nodeID
@@ -59,11 +63,13 @@ public struct TrustedPeer: Codable, Sendable, Equatable {
         self.certificateFingerprint = certificateFingerprint
         self.grantedCapabilities = grantedCapabilities
         self.pairedAt = pairedAt
+        self.lastSeenAt = lastSeenAt
+        self.trustStatus = trustStatus
         self.revokedAt = revokedAt
     }
 
     public var isRevoked: Bool {
-        revokedAt != nil
+        trustStatus == .revoked || revokedAt != nil
     }
 }
 

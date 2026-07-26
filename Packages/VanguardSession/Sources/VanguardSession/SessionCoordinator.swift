@@ -166,6 +166,8 @@ public actor NodeSessionCoordinator {
         messageTask?.cancel()
         messageTask = nil
 
+        await inputService.releaseAllKeys()
+
         if let sessionID = currentSession?.sessionID {
             await authorizationGuard?.revokeSession(sessionID)
         }
@@ -645,6 +647,9 @@ public actor ConsoleSessionCoordinator {
         try await transport.send(message)
 
         messageTask = Task { await listenForMessages() }
+
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        try? await requestKeyframe()
     }
 
     public func disconnect() async {

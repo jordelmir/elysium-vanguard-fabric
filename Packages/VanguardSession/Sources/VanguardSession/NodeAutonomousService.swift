@@ -83,7 +83,9 @@ public actor NodeAutonomousService {
         let plistData = try PropertyListSerialization.data(fromPropertyList: plistContent, format: .xml, options: 0)
         try plistData.write(to: plistPath)
 
-        try SMAppService.loginItem(identifier: "com.elysiumvanguard.node").register()
+        if #available(macOS 13.0, *) {
+            try SMAppService.loginItem(identifier: "com.elysiumvanguard.node").register()
+        }
 
         logger.info("Launch agent installed")
     }
@@ -93,7 +95,9 @@ public actor NodeAutonomousService {
             .appendingPathComponent("Library/LaunchAgents/com.elysiumvanguard.node.plist")
         try? FileManager.default.removeItem(at: plistPath)
 
-        try? SMAppService.loginItem(identifier: "com.elysiumvanguard.node").unregister()
+        if #available(macOS 13.0, *) {
+            try? SMAppService.loginItem(identifier: "com.elysiumvanguard.node").unregister()
+        }
 
         logger.info("Launch agent removed")
     }

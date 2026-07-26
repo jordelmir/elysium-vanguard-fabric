@@ -4,39 +4,60 @@ import CoreMedia
 import CoreVideo
 import VanguardDomain
 
+public enum DecoderError: Error, Sendable, LocalizedError {
+    case notConfigured
+    case decoderSessionCreationFailed
+    case formatDescriptionFailed
+    case decodingFailed(OSStatus)
+    case submitFailed(OSStatus)
+    case missingPixelBuffer
+    case invalidFrameData
+
+    public var errorDescription: String? {
+        switch self {
+        case .notConfigured: return "Decoder not configured"
+        case .decoderSessionCreationFailed: return "Failed to create decoder session"
+        case .formatDescriptionFailed: return "Failed to create format description"
+        case .decodingFailed(let s): return "Decoding failed: \(s)"
+        case .submitFailed(let s): return "Failed to submit frame: \(s)"
+        case .missingPixelBuffer: return "Decoded frame missing pixel buffer"
+        case .invalidFrameData: return "Invalid frame data"
+        }
+    }
+}
+
 @available(macOS 10.13, *)
 public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable {
     private let state: DecoderState
+    private let lock = NSLock()
 
     public init() {
         self.state = DecoderState()
     }
 
-    public func configure(codecConfiguration: Data) async throws {
+    public func configure(sps: Data, pps: Data, width: Int, height: Int) async throws {
         if let existing = await state.getSession() {
             VTDecompressionSessionInvalidate(existing)
             await state.setSession(nil)
         }
 
-        let formatDescription = try createFormatDescription(from: codecConfiguration)
-        await state.setFormatDescription(formatDescription)
+        let formatDesc = try createFormatDescription(sps: sps, pps: pps)
+        await state.setFormatDescription(formatDesc)
 
-        let session = try createSession(formatDescription: formatDescription)
+        let session = try createSession(formatDescription: formatDesc)
         await state.setSession(session)
     }
 
-    public func decodeFrame(_ frame: EncodedVideoFrame) async throws -> DecodedVideoFrame {
+    public func decode(_ accessUnit: EncodedVideoAccessUnit) async throws -> DecodedVideoFrame {
         guard let session = await state.getSession() else {
-            throw DecoderError.decoderSessionCreationFailed
+            throw DecoderError.notConfigured
         }
 
         guard let formatDesc = await state.getFormatDescription() else {
-            throw DecoderError.decoderSessionCreationFailed
+            throw DecoderError.notConfigured
         }
 
-        let context = DecodeContext()
-
-        let blockBuffer = try frame.payload.withUnsafeBytes { ptr -> CMBlockBuffer in
+        let blockBuffer = try accessUnit.avccPayload.withUnsafeBytes { ptr -> CMBlockBuffer in
             guard let baseAddress = ptr.baseAddress else {
                 throw DecoderError.invalidFrameData
             }
@@ -44,11 +65,11 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             let status = CMBlockBufferCreateWithMemoryBlock(
                 allocator: kCFAllocatorDefault,
                 memoryBlock: UnsafeMutableRawPointer(mutating: baseAddress),
-                blockLength: frame.payload.count,
+                blockLength: accessUnit.avccPayload.count,
                 blockAllocator: kCFAllocatorNull,
                 customBlockSource: nil,
                 offsetToData: 0,
-                dataLength: frame.payload.count,
+                dataLength: accessUnit.avccPayload.count,
                 flags: 0,
                 blockBufferOut: &blockBuffer
             )
@@ -59,13 +80,19 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
         }
 
         var sampleBuffer: CMSampleBuffer?
+        var timingInfo = CMSampleTimingInfo(
+            duration: .invalid,
+            presentationTimeStamp: CMTime(value: CMTimeValue(accessUnit.presentationTimestampNanos), timescale: 1_000_000_000),
+            decodeTimeStamp: .invalid
+        )
+
         let sampleStatus = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
             dataBuffer: blockBuffer,
             formatDescription: formatDesc,
             sampleCount: 1,
-            sampleTimingEntryCount: 0,
-            sampleTimingArray: nil,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timingInfo,
             sampleSizeEntryCount: 0,
             sampleSizeArray: nil,
             sampleBufferOut: &sampleBuffer
@@ -75,35 +102,24 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             throw DecoderError.invalidFrameData
         }
 
-        let decodeFlags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
-        var flagsOut: VTDecodeInfoFlags = []
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DecodedVideoFrame, Error>) in
+            var decodeFlags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
+            var flagsOut: VTDecodeInfoFlags = []
 
-        let status = VTDecompressionSessionDecodeFrame(
-            session,
-            sampleBuffer: sample,
-            flags: decodeFlags,
-            frameRefcon: Unmanaged.passRetained(context).toOpaque(),
-            infoFlagsOut: &flagsOut
-        )
+            let context = DecodeCallbackContext(continuation: continuation, frameID: accessUnit.frameID, ptsNanos: accessUnit.presentationTimestampNanos)
 
-        guard status == noErr else {
-            throw DecoderError.decodingFailed(status: status)
+            let status = VTDecompressionSessionDecodeFrame(
+                session,
+                sampleBuffer: sample,
+                flags: decodeFlags,
+                frameRefcon: Unmanaged.passRetained(context).toOpaque(),
+                infoFlagsOut: &flagsOut
+            )
+
+            if status != noErr {
+                continuation.resume(throwing: DecoderError.submitFailed(status))
+            }
         }
-
-        guard let outputBuffer = context.outputPixelBuffer else {
-            throw DecoderError.invalidFrameData
-        }
-
-        await state.setLastDecodedPixelBuffer(outputBuffer)
-
-        let width = CVPixelBufferGetWidth(outputBuffer)
-        let height = CVPixelBufferGetHeight(outputBuffer)
-
-        return DecodedVideoFrame(
-            frameID: frame.frameID,
-            width: width,
-            height: height
-        )
     }
 
     public func reset() async {
@@ -112,54 +128,32 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             await state.setSession(nil)
         }
         await state.setFormatDescription(nil)
-        await state.setLastDecodedPixelBuffer(nil)
     }
 
-    public func getLastDecodedPixelBuffer() async -> CVPixelBuffer? {
-        await state.getLastDecodedPixelBuffer()
-    }
-
-    private func createFormatDescription(from configData: Data) throws -> CMVideoFormatDescription {
+    private func createFormatDescription(sps: Data, pps: Data) throws -> CMVideoFormatDescription {
         var formatDescription: CMVideoFormatDescription?
-
-        let nalUnits = extractNALUnits(from: configData)
-        var spsData: Data?
-        var ppsData: Data?
-
-        for nal in nalUnits {
-            let nalType = nal[0] & 0x1F
-            if nalType == 7 {
-                spsData = Data(nal)
-            } else if nalType == 8 {
-                ppsData = Data(nal)
-            }
-        }
-
-        guard let sps = spsData, let pps = ppsData else {
-            throw DecoderError.decoderSessionCreationFailed
-        }
 
         let status = sps.withUnsafeBytes { spsPtr -> OSStatus in
             pps.withUnsafeBytes { ppsPtr -> OSStatus in
-                var parameterSetPointers: [UnsafePointer<UInt8>] = []
-                var parameterSetSizes: [Int] = []
+                var pointers: [UnsafePointer<UInt8>] = []
+                var sizes: [Int] = []
 
                 if let spsBase = spsPtr.baseAddress {
-                    parameterSetPointers.append(spsBase.assumingMemoryBound(to: UInt8.self))
-                    parameterSetSizes.append(sps.count)
+                    pointers.append(spsBase.assumingMemoryBound(to: UInt8.self))
+                    sizes.append(sps.count)
                 }
                 if let ppsBase = ppsPtr.baseAddress {
-                    parameterSetPointers.append(ppsBase.assumingMemoryBound(to: UInt8.self))
-                    parameterSetSizes.append(pps.count)
+                    pointers.append(ppsBase.assumingMemoryBound(to: UInt8.self))
+                    sizes.append(pps.count)
                 }
 
-                return parameterSetPointers.withUnsafeBufferPointer { pointersPtr -> OSStatus in
-                    parameterSetSizes.withUnsafeBufferPointer { sizesPtr -> OSStatus in
+                return pointers.withUnsafeBufferPointer { ptrBuf -> OSStatus in
+                    sizes.withUnsafeBufferPointer { sizeBuf -> OSStatus in
                         CMVideoFormatDescriptionCreateFromH264ParameterSets(
                             allocator: kCFAllocatorDefault,
-                            parameterSetCount: pointersPtr.count,
-                            parameterSetPointers: pointersPtr.baseAddress!,
-                            parameterSetSizes: sizesPtr.baseAddress!,
+                            parameterSetCount: ptrBuf.count,
+                            parameterSetPointers: ptrBuf.baseAddress!,
+                            parameterSetSizes: sizeBuf.baseAddress!,
                             nalUnitHeaderLength: 4,
                             formatDescriptionOut: &formatDescription
                         )
@@ -169,7 +163,7 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
         }
 
         guard status == noErr, let desc = formatDescription else {
-            throw DecoderError.decoderSessionCreationFailed
+            throw DecoderError.formatDescriptionFailed
         }
 
         return desc
@@ -183,15 +177,21 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
             decompressionOutputRefCon: nil
         )
 
-        let videoDecoderSpecification: [String: Any] = [
+        let decoderSpec: [String: Any] = [
             kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
+        ]
+
+        let pixelBufferAttrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any]
         ]
 
         let status = VTDecompressionSessionCreate(
             allocator: nil,
             formatDescription: formatDescription,
-            decoderSpecification: videoDecoderSpecification as CFDictionary,
-            imageBufferAttributes: nil,
+            decoderSpecification: decoderSpec as CFDictionary,
+            imageBufferAttributes: pixelBufferAttrs as CFDictionary,
             outputCallback: &callbackRecord,
             decompressionSessionOut: &session
         )
@@ -202,73 +202,50 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
 
         return newSession
     }
-
-    private func extractNALUnits(from data: Data) -> [[UInt8]] {
-        var units: [[UInt8]] = []
-        var i = 0
-        let bytes = [UInt8](data)
-
-        while i < bytes.count - 3 {
-            if bytes[i] == 0 && bytes[i + 1] == 0 {
-                if bytes[i + 2] == 1 {
-                    let start = i + 3
-                    if start < bytes.count {
-                        var end = start
-                        while end < bytes.count - 2 {
-                            if bytes[end] == 0 && bytes[end + 1] == 0 && (bytes[end + 2] == 1 || bytes[end + 2] == 0) {
-                                break
-                            }
-                            end += 1
-                        }
-                        if end >= bytes.count - 2 { end = bytes.count }
-                        units.append(Array(bytes[start..<end]))
-                    }
-                    i += 3
-                } else {
-                    i += 2
-                }
-            } else {
-                i += 1
-            }
-        }
-
-        return units
-    }
 }
 
 private final class DecoderState: @unchecked Sendable {
     private var session: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
-    private var lastDecodedPixelBuffer: CVPixelBuffer?
     private let lock = NSLock()
 
-    func getSession() -> VTDecompressionSession? {
-        lock.withLock { session }
+    func getSession() -> VTDecompressionSession? { lock.withLock { session } }
+    func setSession(_ s: VTDecompressionSession?) { lock.withLock { session = s } }
+    func getFormatDescription() -> CMVideoFormatDescription? { lock.withLock { formatDescription } }
+    func setFormatDescription(_ d: CMVideoFormatDescription?) { lock.withLock { formatDescription = d } }
+}
+
+private final class DecodeCallbackContext {
+    let continuation: CheckedContinuation<DecodedVideoFrame, Error>
+    let frameID: UInt64
+    let ptsNanos: UInt64
+    private let resolved = AtomicFlag()
+
+    init(continuation: CheckedContinuation<DecodedVideoFrame, Error>, frameID: UInt64, ptsNanos: UInt64) {
+        self.continuation = continuation
+        self.frameID = frameID
+        self.ptsNanos = ptsNanos
     }
 
-    func setSession(_ session: VTDecompressionSession?) {
-        lock.withLock { self.session = session }
+    func tryResume(returning value: DecodedVideoFrame) -> Bool {
+        guard resolved.compareAndSet() else { return false }
+        continuation.resume(returning: value)
+        return true
     }
 
-    func getFormatDescription() -> CMVideoFormatDescription? {
-        lock.withLock { formatDescription }
-    }
-
-    func setFormatDescription(_ description: CMVideoFormatDescription?) {
-        lock.withLock { self.formatDescription = description }
-    }
-
-    func getLastDecodedPixelBuffer() -> CVPixelBuffer? {
-        lock.withLock { lastDecodedPixelBuffer }
-    }
-
-    func setLastDecodedPixelBuffer(_ buffer: CVPixelBuffer?) {
-        lock.withLock { self.lastDecodedPixelBuffer = buffer }
+    func tryResume(throwing error: Error) -> Bool {
+        guard resolved.compareAndSet() else { return false }
+        continuation.resume(throwing: error)
+        return true
     }
 }
 
-private final class DecodeContext {
-    var outputPixelBuffer: CVPixelBuffer?
+private final class AtomicFlag {
+    private var value: Int32 = 0
+
+    func compareAndSet() -> Bool {
+        OSAtomicCompareAndSwap32(0, 1, &value)
+    }
 }
 
 @available(macOS 10.13, *)
@@ -282,7 +259,23 @@ private func decoderCallback(
     presentationDuration: CMTime
 ) {
     guard let refCon = sourceFrameRefCon else { return }
-    let context = Unmanaged<DecodeContext>.fromOpaque(refCon).takeRetainedValue()
-    guard status == noErr else { return }
-    context.outputPixelBuffer = imageBuffer
+    let context = Unmanaged<DecodeCallbackContext>.fromOpaque(refCon).takeRetainedValue()
+
+    guard status == noErr else {
+        context.tryResume(throwing: DecoderError.decodingFailed(status))
+        return
+    }
+
+    guard let imageBuffer else {
+        context.tryResume(throwing: DecoderError.missingPixelBuffer)
+        return
+    }
+
+    let frame = DecodedVideoFrame(
+        frameID: context.frameID,
+        presentationTimestampNanos: context.ptsNanos,
+        pixelBuffer: imageBuffer
+    )
+
+    _ = context.tryResume(returning: frame)
 }

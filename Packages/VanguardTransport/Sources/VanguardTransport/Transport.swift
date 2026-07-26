@@ -10,11 +10,16 @@ public protocol VanguardTransport: Sendable {
     func connect(to endpoint: NodeEndpoint) async throws
     func listen(port: UInt16) async throws
     func send(_ message: OutboundMessage) async throws
-    func disconnect(reason: DisconnectReason) async
+    func disconnect(reason: TransportDisconnectReason) async
 }
 
-// MARK: - Transport Factory
+// MARK: - Transport with Bonjour
 
-public protocol TransportFactory: Sendable {
-    func createTransport() -> VanguardTransport
+public protocol BonjourTransport: VanguardTransport {
+    func listenWithBonjour(
+        port: UInt16,
+        serviceName: String,
+        serviceType: String,
+        txtRecord: [String: String]
+    ) async throws
 }

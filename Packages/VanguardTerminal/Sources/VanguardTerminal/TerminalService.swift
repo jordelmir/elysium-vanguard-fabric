@@ -5,6 +5,7 @@ import VanguardDomain
 
 public protocol TerminalService: Sendable {
     func open(
+        sessionID: TerminalSessionID,
         configuration: TerminalConfiguration
     ) async throws -> TerminalSessionHandle
 

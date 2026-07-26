@@ -13,21 +13,10 @@ public actor InMemoryTransportActor {
         self.incomingContinuation = incomingContinuation
     }
 
-    func setConnected(_ value: Bool) {
-        connected = value
-    }
-
-    func isConnected() -> Bool {
-        return connected
-    }
-
-    func appendSentMessage(_ message: OutboundMessage) {
-        sentMessages.append(message)
-    }
-
-    func getSentMessages() -> [OutboundMessage] {
-        return sentMessages
-    }
+    func setConnected(_ value: Bool) { connected = value }
+    func isConnected() -> Bool { connected }
+    func appendSentMessage(_ message: OutboundMessage) { sentMessages.append(message) }
+    func getSentMessages() -> [OutboundMessage] { sentMessages }
 }
 
 // MARK: - In-Memory Transport (for testing)
@@ -54,18 +43,14 @@ public final class InMemoryTransport: VanguardTransport, @unchecked Sendable {
 
     public func send(_ message: OutboundMessage) async throws {
         let isConnected = await state.isConnected()
-        guard isConnected else {
-            throw TransportError.connectionRefused
-        }
+        guard isConnected else { throw NWTransportError.notConnected }
         await state.appendSentMessage(message)
     }
 
-    public func disconnect(reason: DisconnectReason) async {
+    public func disconnect(reason: TransportDisconnectReason) async {
         await state.setConnected(false)
         incomingContinuation.finish()
     }
-
-    // Testing helpers
 
     public func simulateIncoming(_ message: InboundMessage) {
         incomingContinuation.yield(message)
@@ -81,15 +66,5 @@ public final class InMemoryTransport: VanguardTransport, @unchecked Sendable {
 
     public func isConnected() async -> Bool {
         return await state.isConnected()
-    }
-}
-
-// MARK: - In-Memory Transport Factory
-
-public struct InMemoryTransportFactory: TransportFactory {
-    public init() {}
-
-    public func createTransport() -> VanguardTransport {
-        return InMemoryTransport()
     }
 }

@@ -57,6 +57,22 @@ create_app_bundle "VanguardConsoleMac" "VanguardConsoleMac" \
     "$PROJECT_DIR/Apps/VanguardConsoleMac/Info.plist" \
     "$PROJECT_DIR/Apps/VanguardConsoleMac/VanguardConsoleMac.entitlements"
 
+sign_bundle() {
+    local app_path="$1"
+    local entitlements="$2"
+
+    echo "🔐 Signing $app_path..."
+    codesign --force --deep --sign - --entitlements "$entitlements" "$app_path"
+    codesign --verify --deep --strict --verbose=2 "$app_path"
+    echo "✅ Signed $app_path"
+}
+
+sign_bundle "$BUILD_DIR/VanguardNodeMac.app" \
+    "$PROJECT_DIR/Apps/VanguardNodeMac/VanguardNodeMac.entitlements"
+
+sign_bundle "$BUILD_DIR/VanguardConsoleMac.app" \
+    "$PROJECT_DIR/Apps/VanguardConsoleMac/VanguardConsoleMac.entitlements"
+
 echo ""
 echo "🚀 Build complete! Apps created in:"
 echo "   $BUILD_DIR/VanguardNodeMac.app"

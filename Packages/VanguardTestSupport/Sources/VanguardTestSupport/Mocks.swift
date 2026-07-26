@@ -52,7 +52,7 @@ public final class MockTransport: VanguardTransport, @unchecked Sendable {
         await state.appendSentMessage(message)
     }
 
-    public func disconnect(reason: DisconnectReason) async {
+    public func disconnect(reason: TransportDisconnectReason) async {
         await state.setConnected(false)
         incomingContinuation.finish()
     }
@@ -195,7 +195,7 @@ public struct MockSecurityService: SecurityService {
     public init() {}
 
     public func authorize(
-        _ action: NodeAction,
+        _ action: SecurityAction,
         context: AuthorizationContext
     ) async throws -> AuthorizationDecision {
         return authorizationResult

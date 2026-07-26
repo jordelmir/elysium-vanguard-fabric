@@ -22,9 +22,7 @@ public struct CosmicBackground: View {
                 mouseGlow(size: geo.size)
             }
             .onAppear { withAnimation(.linear(duration: 120).repeatForever(autoreverses: false)) { time = 1 } }
-            .onContinuousHover { phase in
-                if case .active(let loc) = phase { withAnimation(.easeOut(duration: 0.3)) { mouseLocation = loc } }
-            }
+            .modifier(HoverGlowModifier(mouseLocation: $mouseLocation))
         }
     }
 
@@ -99,4 +97,19 @@ public struct ScanLineModifier: ViewModifier {
 
 public extension View {
     func scanLine(_ color: Color = DS.Colors.accent) -> some View { modifier(ScanLineModifier(color: color)) }
+}
+
+struct HoverGlowModifier: ViewModifier {
+    @Binding var mouseLocation: CGPoint
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.onContinuousHover { phase in
+                if case .active(let loc) = phase {
+                    withAnimation(.easeOut(duration: 0.3)) { mouseLocation = loc }
+                }
+            }
+        } else {
+            content
+        }
+    }
 }

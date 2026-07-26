@@ -1,6 +1,8 @@
 import SwiftUI
 import VanguardUI
 import AppKit
+import CoreVideo
+import CoreImage
 import VanguardDomain
 import VanguardProtocol
 import VanguardInput
@@ -129,29 +131,8 @@ struct RemoteDesktopView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let location):
-                renderer.cursorX = location.x
-                renderer.cursorY = location.y
-                renderer.showCrosshair = true
-            case .ended:
-                renderer.showCrosshair = false
-            }
-        }
-        .onTapGesture { location in
-            Task {
-                let frame = renderer.currentFrameSize
-                guard frame.width > 0, frame.height > 0 else { return }
-                let normalizedX = location.x / frame.width
-                let normalizedY = 1.0 - (location.y / frame.height)
-                let event = RemoteInputEvent.mouseButton(
-                    button: .left, phase: .down,
-                    normalizedX: normalizedX, normalizedY: normalizedY
-                )
-                try? await consoleState.sendInputEvent(event)
-            }
-        }
+        .modifier(DesktopHoverModifier(renderer: renderer))
+        .modifier(DesktopTapModifier(renderer: renderer, consoleState: consoleState))
     }
 
     private var statusBar: some View {
@@ -188,6 +169,62 @@ struct RemoteDesktopView: View {
     }
 }
 
+struct DesktopHoverModifier: ViewModifier {
+    @ObservedObject var renderer: RemoteDesktopState
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    renderer.cursorX = location.x
+                    renderer.cursorY = location.y
+                    renderer.showCrosshair = true
+                case .ended:
+                    renderer.showCrosshair = false
+                }
+            }
+        } else {
+            content.onHover { inside in
+                renderer.showCrosshair = inside
+            }
+        }
+    }
+}
+
+struct DesktopTapModifier: ViewModifier {
+    @ObservedObject var renderer: RemoteDesktopState
+    var consoleState: ConsoleAppState
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.onTapGesture { location in
+                Task {
+                    let frame = renderer.currentFrameSize
+                    guard frame.width > 0, frame.height > 0 else { return }
+                    let normalizedX = location.x / frame.width
+                    let normalizedY = 1.0 - (location.y / frame.height)
+                    let event = RemoteInputEvent.mouseButton(
+                        button: .left, phase: .down,
+                        normalizedX: normalizedX, normalizedY: normalizedY
+                    )
+                    try? await consoleState.sendInputEvent(event)
+                }
+            }
+        } else {
+            content.onTapGesture {
+                Task {
+                    let frame = renderer.currentFrameSize
+                    guard frame.width > 0, frame.height > 0 else { return }
+                    let event = RemoteInputEvent.mouseButton(
+                        button: .left, phase: .down,
+                        normalizedX: 0.5, normalizedY: 0.5
+                    )
+                    try? await consoleState.sendInputEvent(event)
+                }
+            }
+        }
+    }
+}
+
 @MainActor
 final class RemoteDesktopState: ObservableObject {
     @Published var currentImage: NSImage?
@@ -214,7 +251,7 @@ final class RemoteDesktopState: ObservableObject {
         receiveTask = Task { [weak self] in
             guard let self = self else { return }
             do {
-                for try await frameData in await consoleState.frameUpdates {
+                for try await sendableFrame in await consoleState.frameUpdates {
                     await MainActor.run {
                         self.frameCount += 1
                         let now = Date()
@@ -223,7 +260,7 @@ final class RemoteDesktopState: ObservableObject {
                             self.frameCount = 0
                             self.lastFPSTime = now
                         }
-                        if let image = self.createImage(from: frameData) {
+                        if let image = self.createImage(from: sendableFrame.pixelBuffer) {
                             self.currentImage = image
                         }
                     }
@@ -245,8 +282,11 @@ final class RemoteDesktopState: ObservableObject {
         isConnected = false
     }
 
-    private func createImage(from data: Data) -> NSImage? {
-        guard let bitmap = NSBitmapImageRep(data: data) else { return nil }
-        return NSImage(size: bitmap.size)
+    private func createImage(from pixelBuffer: CVPixelBuffer) -> NSImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let rep = NSCIImageRep(ciImage: ciImage)
+        let nsImage = NSImage(size: rep.size)
+        nsImage.addRepresentation(rep)
+        return nsImage
     }
 }

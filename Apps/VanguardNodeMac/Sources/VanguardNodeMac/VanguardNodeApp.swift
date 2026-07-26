@@ -10,11 +10,13 @@ struct VanguardNodeApp: App {
                 .environmentObject(nodeState)
         }
 
-        MenuBarExtra {
-            MenuBarView()
-                .environmentObject(nodeState)
-        } label: {
-            Label("Elysium Node", systemImage: nodeState.isRunning ? "circle.fill" : "circle")
+        if #available(macOS 13.0, *) {
+            MenuBarExtra {
+                MenuBarView()
+                    .environmentObject(nodeState)
+            } label: {
+                Label("Elysium Node", systemImage: nodeState.isRunning ? "circle.fill" : "circle")
+            }
         }
     }
 }

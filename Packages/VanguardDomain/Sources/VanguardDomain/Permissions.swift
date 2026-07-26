@@ -183,3 +183,75 @@ public struct EncodedVideoFrame: Codable, Sendable {
         self.payload = payload
     }
 }
+
+public enum VideoCodec: String, Codable, Sendable {
+    case h264
+}
+
+public struct VideoCodecConfigurationPayload: Codable, Sendable {
+    public let codec: VideoCodec
+    public let revision: UInt32
+    public let width: UInt32
+    public let height: UInt32
+    public let nalLengthSize: UInt8
+    public let sps: Data
+    public let pps: Data
+
+    public init(codec: VideoCodec, revision: UInt32, width: UInt32, height: UInt32, nalLengthSize: UInt8, sps: Data, pps: Data) {
+        self.codec = codec
+        self.revision = revision
+        self.width = width
+        self.height = height
+        self.nalLengthSize = nalLengthSize
+        self.sps = sps
+        self.pps = pps
+    }
+}
+
+public struct VideoAccessUnitPayload: Codable, Sendable {
+    public let frameID: UInt64
+    public let presentationTimestampNanos: UInt64
+    public let durationNanos: UInt64
+    public let isKeyframe: Bool
+    public let configurationRevision: UInt32
+    public let avccData: Data
+
+    public init(frameID: UInt64, presentationTimestampNanos: UInt64, durationNanos: UInt64, isKeyframe: Bool, configurationRevision: UInt32, avccData: Data) {
+        self.frameID = frameID
+        self.presentationTimestampNanos = presentationTimestampNanos
+        self.durationNanos = durationNanos
+        self.isKeyframe = isKeyframe
+        self.configurationRevision = configurationRevision
+        self.avccData = avccData
+    }
+}
+
+import CoreMedia
+import CoreVideo
+
+public struct SendablePixelBuffer: @unchecked Sendable {
+    public let pixelBuffer: CVPixelBuffer
+    public init(_ pixelBuffer: CVPixelBuffer) { self.pixelBuffer = pixelBuffer }
+}
+
+public struct CapturedVideoFrame: @unchecked Sendable {
+    public let pixelBuffer: CVPixelBuffer
+    public let presentationTimeStamp: CMTime
+    public let displayID: CGDirectDisplayID
+    public let width: Int
+    public let height: Int
+    public let bytesPerRow: Int
+
+    public init(
+        pixelBuffer: CVPixelBuffer,
+        presentationTimeStamp: CMTime,
+        displayID: CGDirectDisplayID
+    ) {
+        self.pixelBuffer = pixelBuffer
+        self.presentationTimeStamp = presentationTimeStamp
+        self.displayID = displayID
+        self.width = CVPixelBufferGetWidth(pixelBuffer)
+        self.height = CVPixelBufferGetHeight(pixelBuffer)
+        self.bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+    }
+}

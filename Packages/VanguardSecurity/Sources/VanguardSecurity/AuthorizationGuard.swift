@@ -15,7 +15,7 @@ public actor AuthorizationGuard {
     }
 
     public func authorize(
-        _ action: NodeAction,
+        _ action: SecurityAction,
         sessionID: SessionID
     ) async throws -> AuthorizationDecision {
         guard let capabilities = sessionCapabilities[sessionID] else {
@@ -51,7 +51,7 @@ public actor AuthorizationGuard {
         sessionCapabilities[sessionID] = existing
     }
 
-    private func requiredCapability(for action: NodeAction) -> NodeCapability? {
+    private func requiredCapability(for action: SecurityAction) -> NodeCapability? {
         switch action {
         case .startScreenCapture:
             return .screenView

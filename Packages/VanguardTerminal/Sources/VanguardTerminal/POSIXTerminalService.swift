@@ -2,16 +2,27 @@ import Foundation
 import os
 import VanguardDomain
 
+private func exitStatus(_ status: Int32) -> Int32 {
+    if (status & 0x7f) == 0 {
+        return (status >> 8) & 0xff
+    }
+    return -1
+}
+
+public protocol TerminalExitStatusDelegate: Sendable {
+    func terminalDidExit(sessionID: TerminalSessionID, exitStatus: Int32)
+}
+
 public final class POSIXTerminalService: TerminalService, @unchecked Sendable {
     private let state: SessionState
     private let logger = Logger(subsystem: "com.elysiumvanguard.fabric", category: "Terminal")
+    private var exitDelegates: [TerminalSessionID: TerminalExitStatusDelegate] = [:]
 
     public init() {
         self.state = SessionState()
     }
 
-    public func open(configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
-        let sessionID = TerminalSessionID()
+    public func open(sessionID: TerminalSessionID, configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
         let cols = configuration.columns
         let rows = configuration.rows
 
@@ -47,11 +58,25 @@ public final class POSIXTerminalService: TerminalService, @unchecked Sendable {
 
         logger.info("Terminal session \(sessionID.rawValue.uuidString) created (pid \(pid))")
 
+        Task { [weak self] in
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)
+            let exitCode = exitStatus(status)
+            guard let self else { return }
+            if let delegate = self.exitDelegates.removeValue(forKey: sessionID) {
+                delegate.terminalDidExit(sessionID: sessionID, exitStatus: exitCode)
+            }
+        }
+
         return TerminalSessionHandle(
             sessionID: sessionID,
             pid: pid,
             state: .open
         )
+    }
+
+    public func registerExitDelegate(_ delegate: TerminalExitStatusDelegate, for sessionID: TerminalSessionID) {
+        exitDelegates[sessionID] = delegate
     }
 
     public func write(sessionID: TerminalSessionID, data: Data) async throws {
@@ -101,7 +126,16 @@ public final class POSIXTerminalService: TerminalService, @unchecked Sendable {
         }
 
         kill(session.pid, sig)
-        logger.info("Terminal session \(sessionID.rawValue.uuidString) closed (signal \(signal.rawValue))")
+
+        var status: Int32 = 0
+        waitpid(session.pid, &status, 0)
+        let exitCode = exitStatus(status)
+
+        if let delegate = exitDelegates.removeValue(forKey: sessionID) {
+            delegate.terminalDidExit(sessionID: sessionID, exitStatus: exitCode)
+        }
+
+        logger.info("Terminal session \(sessionID.rawValue.uuidString) closed (exit code \(exitCode))")
     }
 
     public func getOutput(sessionID: TerminalSessionID, fromOffset: UInt64) -> AsyncThrowingStream<Data, Error> {

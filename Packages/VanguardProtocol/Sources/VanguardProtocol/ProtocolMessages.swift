@@ -50,7 +50,7 @@ public struct HelloPayload: Codable, Sendable {
     public let osVersion: String
 
     public init(
-        protocolVersion: ProtocolVersion = .v1,
+        protocolVersion: ProtocolVersion = .v1_0,
         nodeID: NodeID,
         displayName: String,
         architecture: CPUArchitecture,
@@ -72,9 +72,9 @@ public struct HelloAckPayload: Codable, Sendable {
     public let acceptedVersion: ProtocolVersion
 
     public init(
-        protocolVersion: ProtocolVersion = .v1,
+        protocolVersion: ProtocolVersion = .v1_0,
         nodeID: NodeID,
-        acceptedVersion: ProtocolVersion = .v1
+        acceptedVersion: ProtocolVersion = .v1_0
     ) {
         self.protocolVersion = protocolVersion
         self.nodeID = nodeID
@@ -367,5 +367,143 @@ public struct FlowControlAckPayload: Codable, Sendable {
     public init(channel: UInt8, bytesReceived: UInt32) {
         self.channel = channel
         self.bytesReceived = bytesReceived
+    }
+}
+
+// MARK: - Job Payloads
+
+public struct JobSubmitPayload: Codable, Sendable {
+    public let jobID: String
+    public let name: String
+    public let command: [String]
+    public let workingDirectory: String?
+    public let environment: [String: String]
+    public let timeoutSeconds: TimeInterval
+    public let resourceRequirements: JobResourceRequirementsPayload
+
+    public init(jobID: String, name: String, command: [String], workingDirectory: String? = nil, environment: [String: String] = [:], timeoutSeconds: TimeInterval = 300, resourceRequirements: JobResourceRequirementsPayload = JobResourceRequirementsPayload()) {
+        self.jobID = jobID
+        self.name = name
+        self.command = command
+        self.workingDirectory = workingDirectory
+        self.environment = environment
+        self.timeoutSeconds = timeoutSeconds
+        self.resourceRequirements = resourceRequirements
+    }
+}
+
+public struct JobResourceRequirementsPayload: Codable, Sendable {
+    public let minMemoryMB: Int
+    public let minCPUCores: Int
+    public let architecture: String?
+
+    public init(minMemoryMB: Int = 0, minCPUCores: Int = 1, architecture: String? = nil) {
+        self.minMemoryMB = minMemoryMB
+        self.minCPUCores = minCPUCores
+        self.architecture = architecture
+    }
+}
+
+public struct JobAssignedPayload: Codable, Sendable {
+    public let jobID: String
+    public let nodeID: String
+
+    public init(jobID: String, nodeID: String) {
+        self.jobID = jobID
+        self.nodeID = nodeID
+    }
+}
+
+public struct JobProgressPayload: Codable, Sendable {
+    public let jobID: String
+    public let stdout: String?
+    public let stderr: String?
+
+    public init(jobID: String, stdout: String? = nil, stderr: String? = nil) {
+        self.jobID = jobID
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+}
+
+public struct JobCompletedPayload: Codable, Sendable {
+    public let jobID: String
+    public let exitCode: Int32
+    public let stdout: String?
+    public let stderr: String?
+    public let duration: TimeInterval
+
+    public init(jobID: String, exitCode: Int32, stdout: String? = nil, stderr: String? = nil, duration: TimeInterval) {
+        self.jobID = jobID
+        self.exitCode = exitCode
+        self.stdout = stdout
+        self.stderr = stderr
+        self.duration = duration
+    }
+}
+
+public struct JobFailedPayload: Codable, Sendable {
+    public let jobID: String
+    public let error: String
+
+    public init(jobID: String, error: String) {
+        self.jobID = jobID
+        self.error = error
+    }
+}
+
+public struct JobCancelledPayload: Codable, Sendable {
+    public let jobID: String
+
+    public init(jobID: String) {
+        self.jobID = jobID
+    }
+}
+
+// MARK: - Artifact Payloads
+
+public struct ArtifactManifestPayload: Codable, Sendable {
+    public let artifactID: String
+    public let name: String
+    public let version: String
+    public let chunkSize: Int
+    public let totalSize: Int
+    public let sha256Hash: String
+    public let chunkHashes: [String]
+    public let metadata: [String: String]
+
+    public init(artifactID: String, name: String, version: String, chunkSize: Int, totalSize: Int, sha256Hash: String, chunkHashes: [String], metadata: [String: String] = [:]) {
+        self.artifactID = artifactID
+        self.name = name
+        self.version = version
+        self.chunkSize = chunkSize
+        self.totalSize = totalSize
+        self.sha256Hash = sha256Hash
+        self.chunkHashes = chunkHashes
+        self.metadata = metadata
+    }
+}
+
+public struct ArtifactChunkPayload: Codable, Sendable {
+    public let artifactID: String
+    public let index: Int
+    public let dataBase64: String
+    public let sha256Hash: String
+
+    public init(artifactID: String, index: Int, dataBase64: String, sha256Hash: String) {
+        self.artifactID = artifactID
+        self.index = index
+        self.dataBase64 = dataBase64
+        self.sha256Hash = sha256Hash
+    }
+}
+
+public struct ArtifactRequestPayload: Codable, Sendable {
+    public let artifactID: String
+    public let chunkIndices: [Int]?
+
+    public init(artifactID: String, chunkIndices: [Int]? = nil) {
+        self.artifactID = artifactID
+        self.chunkIndices = chunkIndices
     }
 }
