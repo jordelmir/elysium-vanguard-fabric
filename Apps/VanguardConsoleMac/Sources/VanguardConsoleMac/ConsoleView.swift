@@ -1,29 +1,72 @@
 import SwiftUI
 import VanguardUI
 
+enum PanelTab: String, CaseIterable {
+    case remoteDesktop = "Remote Desktop"
+    case nodes = "Nodos"
+    case jobs = "Jobs"
+    case resources = "Resources"
+    case workspace = "Workspace"
+    case terminal = "Terminal"
+    case agents = "Agents"
+    case security = "Security"
+    case settings = "Settings"
+
+    var icon: String {
+        switch self {
+        case .remoteDesktop: return "display"
+        case .nodes: return "network"
+        case .jobs: return "hammer.fill"
+        case .resources: return "chart.bar.fill"
+        case .workspace: return "folder.fill"
+        case .terminal: return "terminal"
+        case .agents: return "brain.head.profile"
+        case .security: return "shield.checkered"
+        case .settings: return "gearshape.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .remoteDesktop: return DS.Colors.accent
+        case .nodes: return DS.Colors.info
+        case .jobs: return DS.Colors.warning
+        case .resources: return DS.Colors.success
+        case .workspace: return DS.Colors.accent
+        case .terminal: return DS.Colors.success
+        case .agents: return DS.Colors.warning
+        case .security: return DS.Colors.error
+        case .settings: return DS.Colors.textTertiary
+        }
+    }
+}
+
 struct ConsoleView: View {
     @EnvironmentObject private var state: ConsoleAppState
+    @State private var selectedTab: PanelTab = .remoteDesktop
     @State private var selectedNode: ConsoleAppState.DiscoveredNode?
 
     var body: some View {
         CosmicBackground(baseColor: DS.Colors.info, particleCount: 35)
             .overlay(
                 HStack(spacing: 0) {
-                    sidebar
+                    navigationSidebar
                     Divider().background(Color.white.opacity(0.04))
-                    mainArea
+                    mainContent
                 }
             )
-            .frame(minWidth: 860, minHeight: 560)
+            .frame(minWidth: 1000, minHeight: 640)
             .environment(\.themeProfile, state.currentTheme)
     }
 
-    private var sidebar: some View {
+    private var navigationSidebar: some View {
         VStack(spacing: 0) {
             sidebarHeader
                 .padding(DS.Spacing.lg)
             Divider().background(Color.white.opacity(0.04))
             nodeList
+            Divider().background(Color.white.opacity(0.04))
+            tabList
             Divider().background(Color.white.opacity(0.04))
             sidebarFooter
         }
@@ -80,48 +123,68 @@ struct ConsoleView: View {
     }
 
     private var nodeList: some View {
-        ScrollView {
-            LazyVStack(spacing: DS.Spacing.sm) {
-                if state.discoveredNodes.isEmpty {
-                    emptyState
-                } else {
-                    ForEach(Array(state.discoveredNodes.enumerated()), id: \.element.id) { index, node in
-                        NodeCard(node: node, isSelected: selectedNode?.id == node.id)
-                            .progressiveReveal(delay: Double(index) * 0.05)
-                            .onTapGesture {
-                                selectedNode = node
-                                Task { await state.connectToNode(node) }
+        VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+            Text("NODES")
+                .font(DS.Typography.micro)
+                .foregroundColor(DS.Colors.textQuaternary)
+                .tracking(2)
+                .padding(.horizontal, DS.Spacing.lg)
+                .padding(.top, DS.Spacing.md)
+
+            ScrollView {
+                LazyVStack(spacing: DS.Spacing.xs) {
+                    if state.discoveredNodes.isEmpty {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: DS.Spacing.xs) {
+                                Image(systemName: "radar")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(DS.Colors.textQuaternary)
+                                    .pulsing(DS.Colors.info.opacity(0.3))
+                                Text("Scanning...")
+                                    .font(DS.Typography.caption)
+                                    .foregroundColor(DS.Colors.textQuaternary)
                             }
+                            Spacer()
+                        }
+                        .padding(.vertical, DS.Spacing.md)
+                    } else {
+                        ForEach(Array(state.discoveredNodes.enumerated()), id: \.element.id) { index, node in
+                            SidebarNodeCard(node: node, isSelected: selectedNode?.id == node.id)
+                                .progressiveReveal(delay: Double(index) * 0.05)
+                                .onTapGesture {
+                                    selectedNode = node
+                                    selectedTab = .remoteDesktop
+                                    Task { await state.connectToNode(node) }
+                                }
+                        }
                     }
                 }
+                .padding(.horizontal, DS.Spacing.sm)
             }
-            .padding(DS.Spacing.md)
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: DS.Spacing.lg) {
-            Spacer().frame(height: 60)
-            ZStack {
-                Circle()
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                    .frame(width: 56, height: 56)
-                Image(systemName: "radar")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundColor(DS.Colors.textQuaternary)
+    private var tabList: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+            Text("PANELS")
+                .font(DS.Typography.micro)
+                .foregroundColor(DS.Colors.textQuaternary)
+                .tracking(2)
+                .padding(.horizontal, DS.Spacing.lg)
+                .padding(.top, DS.Spacing.md)
+
+            ScrollView {
+                VStack(spacing: DS.Spacing.xs) {
+                    ForEach(PanelTab.allCases, id: \.self) { tab in
+                        TabButton(tab: tab, isSelected: selectedTab == tab) {
+                            selectedTab = tab
+                        }
+                    }
+                }
+                .padding(.horizontal, DS.Spacing.sm)
             }
-            .pulsing(DS.Colors.info.opacity(0.3))
-            VStack(spacing: DS.Spacing.xs) {
-                Text("Scanning LAN...")
-                    .font(DS.Typography.subheadline)
-                    .foregroundColor(DS.Colors.textTertiary)
-                Text("Start Node on another Mac")
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textQuaternary)
-            }
-            Spacer()
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var sidebarFooter: some View {
@@ -146,7 +209,39 @@ struct ConsoleView: View {
     }
 
     @ViewBuilder
-    private var mainArea: some View {
+    private var mainContent: some View {
+        switch selectedTab {
+        case .remoteDesktop:
+            remoteDesktopArea
+        case .nodes:
+            NodesPanel()
+                .environmentObject(state)
+        case .jobs:
+            JobsPanel()
+                .environmentObject(state)
+        case .resources:
+            ResourcesPanel()
+                .environmentObject(state)
+        case .workspace:
+            WorkspacePanel()
+                .environmentObject(state)
+        case .terminal:
+            TerminalPanel()
+                .environmentObject(state)
+        case .agents:
+            AgentsPanel()
+                .environmentObject(state)
+        case .security:
+            SecurityPanel()
+                .environmentObject(state)
+        case .settings:
+            SettingsPanel()
+                .environmentObject(state)
+        }
+    }
+
+    @ViewBuilder
+    private var remoteDesktopArea: some View {
         switch state.currentState {
         case .pairing(let code):
             PairingCodeView(nodeName: state.connectedNodeName ?? "Node", challengeCode: code)
@@ -213,17 +308,17 @@ struct ConsoleView: View {
     }
 }
 
-struct NodeCard: View {
+struct SidebarNodeCard: View {
     let node: ConsoleAppState.DiscoveredNode
     let isSelected: Bool
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: DS.Spacing.md) {
-            StatusIndicator(status: node.status == .online ? .connected : node.status == .connecting ? .scanning : .offline, size: 8)
+        HStack(spacing: DS.Spacing.sm) {
+            StatusIndicator(status: node.status == .online ? .connected : node.status == .connecting ? .scanning : .offline, size: 6)
             VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
                 Text(node.name)
-                    .font(DS.Typography.headline)
+                    .font(DS.Typography.caption)
                     .foregroundColor(DS.Colors.textPrimary)
                 Text(node.host)
                     .font(DS.Typography.caption)
@@ -231,17 +326,48 @@ struct NodeCard: View {
             }
             Spacer()
             if node.status == .connecting {
-                ProgressView().scaleEffect(0.5)
+                ProgressView().scaleEffect(0.4)
             } else {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundColor(DS.Colors.textQuaternary)
             }
         }
-        .padding(DS.Spacing.md)
-        .glass(style: isSelected ? .colored(DS.Colors.accent) : .ultraThin, cornerRadius: DS.Radius.lg)
+        .padding(.horizontal, DS.Spacing.md)
+        .padding(.vertical, DS.Spacing.sm)
+        .glass(style: isSelected ? .colored(DS.Colors.accent) : .ultraThin, cornerRadius: DS.Radius.md)
         .adaptiveBorder(highlighted: isHovered || isSelected)
         .scaleEffect(isHovered ? 1.01 : 1.0)
+        .onHover { isHovered = $0 }
+        .animation(DS.Animation.springFast, value: isHovered)
+        .animation(DS.Animation.springFast, value: isSelected)
+    }
+}
+
+struct TabButton: View {
+    let tab: PanelTab
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.Spacing.sm) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(isSelected ? tab.color : DS.Colors.textTertiary)
+                    .frame(width: 20)
+                Text(tab.rawValue)
+                    .font(DS.Typography.caption)
+                    .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textTertiary)
+                Spacer()
+            }
+            .padding(.horizontal, DS.Spacing.md)
+            .padding(.vertical, DS.Spacing.sm)
+            .glass(style: isSelected ? .colored(tab.color) : .ultraThin, cornerRadius: DS.Radius.md)
+            .adaptiveBorder(highlighted: isHovered || isSelected)
+        }
+        .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .animation(DS.Animation.springFast, value: isHovered)
         .animation(DS.Animation.springFast, value: isSelected)
