@@ -180,9 +180,36 @@ public final class ConsoleAppState: ObservableObject {
     private var outputTasks: [TerminalSessionID: Task<Void, any Error>] = [:]
     private var currentSessionID: SessionID?
     private var refreshTimer: Timer?
+    private var reconnectionTask: Task<Void, Never>?
+    private var reconnectionAttempts = 0
+    private let maxReconnectionAttempts = 10
+    private var lastConnectedNode: DiscoveredNode?
+    private var clipboardSyncTask: Task<Void, Never>?
+    @Published public var trustedPeers: [TrustedPeer] = []
+    @Published public var terminalScrollbackLimit: Int = 10000
+    @Published public var isReconnecting = false
+    @Published public var reconnectionAttempt = 0
+
+    public struct TrustedPeer: Identifiable, Codable, Sendable {
+        public let id: UUID
+        public let name: String
+        public let host: String
+        public let nodeIDHash: Data
+        public let pairedAt: Date
+
+        public init(id: UUID = UUID(), name: String, host: String, nodeIDHash: Data, pairedAt: Date = Date()) {
+            self.id = id
+            self.name = name
+            self.host = host
+            self.nodeIDHash = nodeIDHash
+            self.pairedAt = pairedAt
+        }
+    }
 
     public init() {
+        loadTrustedPeers()
         Task { await registerShortcuts() }
+        Task { await startEmergencyStopHotkey() }
     }
 
     // MARK: - Jobs
@@ -552,6 +579,7 @@ public final class ConsoleAppState: ObservableObject {
 
     public func connectToNode(_ node: DiscoveredNode) async {
         statusMessage = "Connecting to \(node.name)..."
+        lastConnectedNode = node
         discoveredNodes = discoveredNodes.map { var n = $0; if n.id == node.id { n.status = .connecting }; return n }
 
         do {
@@ -596,6 +624,7 @@ public final class ConsoleAppState: ObservableObject {
             await refreshFabricEvents()
 
             await clipboardService.startWatching()
+            startClipboardSync()
 
             let metrics = Self.gatherLocalSystemMetrics()
             let descriptor = NodeResourceDescriptor(
@@ -630,6 +659,8 @@ public final class ConsoleAppState: ObservableObject {
                 await audit.logSecurityEvent(actorNodeID: localIdentity.nodeID, targetNodeID: localIdentity.nodeID, sessionID: nil, action: .disconnected)
             }
         }
+        stopClipboardSync()
+        cancelReconnection()
         await coordinator?.disconnect()
         await clipboardService.stopWatching()
         isConnected = false
@@ -781,12 +812,193 @@ public final class ConsoleAppState: ObservableObject {
                 Task { for node in nodes { await self.eventLog.record(.nodeDiscovered(NodeID())) } }
                 await refreshFabricEvents()
             case .connecting(let ad): currentState = .connecting; statusMessage = "Connecting to \(ad.displayName)..."
-            case .connected(let nodeID): currentState = .connected; isConnected = true; connectedNodeName = nodeID.rawValue.uuidString.prefix(8).description; statusMessage = "Connected"
+            case .connected(let nodeID): currentState = .connected; isConnected = true; connectedNodeName = nodeID.rawValue.uuidString.prefix(8).description; statusMessage = "Connected"; reconnectionAttempts = 0; isReconnecting = false
             case .pairing(let code): currentState = .pairing(challengeCode: code); statusMessage = "Pairing — code: \(code)"
             case .paired(let nodeID): currentState = .paired; isConnected = true; connectedNodeName = nodeID.rawValue.uuidString.prefix(8).description; statusMessage = "Paired"
             case .capturing: currentState = .capturing; statusMessage = "Receiving video..."
-            case .error(let msg): currentState = .error(msg); statusMessage = "Error: \(msg)"
+            case .error(let msg):
+                currentState = .error(msg)
+                statusMessage = "Error: \(msg)"
+                if let node = lastConnectedNode, reconnectionAttempts < maxReconnectionAttempts {
+                    startReconnection(to: node)
+                }
             }
         }
+    }
+
+    // MARK: - Reconnection
+
+    private func startReconnection(to node: DiscoveredNode) {
+        guard !isReconnecting else { return }
+        isReconnecting = true
+        reconnectionTask?.cancel()
+        reconnectionTask = Task { [weak self] in
+            guard let self else { return }
+            while self.reconnectionAttempts < self.maxReconnectionAttempts && !Task.isCancelled {
+                self.reconnectionAttempts += 1
+                self.reconnectionAttempt = self.reconnectionAttempts
+                let delay = min(pow(2.0, Double(self.reconnectionAttempts)) * 0.5, 30.0)
+                self.statusMessage = "Reconnecting in \(Int(delay))s (attempt \(self.reconnectionAttempts))..."
+                self.appendAudit("Reconnection attempt \(self.reconnectionAttempts) to \(node.name) in \(Int(delay))s", severity: .warning)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { break }
+                do {
+                    try await self.connectToNode(node)
+                    self.isReconnecting = false
+                    self.appendAudit("Reconnected to \(node.name)", severity: .success)
+                    return
+                } catch {
+                    self.appendAudit("Reconnection failed: \(error.localizedDescription)", severity: .error)
+                }
+            }
+            await MainActor.run {
+                self.isReconnecting = false
+                self.reconnectionAttempts = 0
+            }
+        }
+    }
+
+    public func cancelReconnection() {
+        reconnectionTask?.cancel()
+        reconnectionTask = nil
+        isReconnecting = false
+        reconnectionAttempts = 0
+    }
+
+    // MARK: - Remote Terminal
+
+    public func openRemoteTerminalSession(nodeName: String) {
+        if isConnected {
+            let sessionID = TerminalSessionID(rawValue: UUID())
+            let config = TerminalConfiguration(shell: "/bin/zsh", columns: 80, rows: 24)
+            Task {
+                do {
+                    guard let coordinator = coordinator else { return }
+                    let handle = try await coordinator.openTerminal(configuration: config)
+                    let session = TrackedTerminalSession(id: sessionID, nodeName: nodeName, pid: handle.pid)
+                    terminalSessions.append(session)
+                    appendAudit("Remote terminal opened on \(nodeName)", severity: .info)
+                    await eventLog.record(.terminalOpened(sessionID))
+                    await refreshFabricEvents()
+
+                    let task = Task {
+                        for try await output in await coordinator.terminalOutputUpdates {
+                            if output.sessionID == sessionID,
+                               let idx = self.terminalSessions.firstIndex(where: { $0.id == sessionID }) {
+                                let text = String(data: output.data, encoding: .utf8) ?? ""
+                                self.terminalSessions[idx].output += text
+                                if self.terminalSessions[idx].output.count > self.terminalScrollbackLimit {
+                                    let excess = self.terminalSessions[idx].output.count - self.terminalScrollbackLimit
+                                    self.terminalSessions[idx].output = String(self.terminalSessions[idx].output.dropFirst(excess))
+                                }
+                            }
+                        }
+                        if let idx = self.terminalSessions.firstIndex(where: { $0.id == sessionID }) {
+                            self.terminalSessions[idx].isActive = false
+                        }
+                    }
+                    outputTasks[sessionID] = task
+                } catch {
+                    appendAudit("Remote terminal open failed: \(error.localizedDescription)", severity: .error)
+                }
+            }
+        } else {
+            openTerminalSession(nodeName: nodeName)
+        }
+    }
+
+    public func sendRemoteTerminalInput(_ session: TrackedTerminalSession, command: String) {
+        guard isConnected, let coordinator = coordinator else {
+            sendTerminalCommand(session, command: command)
+            return
+        }
+        Task {
+            let data = (command + "\n").data(using: .utf8) ?? Data()
+            try await coordinator.sendTerminalInput(session.id, data: data)
+        }
+        if let idx = terminalSessions.firstIndex(where: { $0.id == session.id }) {
+            terminalSessions[idx].output += "$ \(command)\n"
+        }
+    }
+
+    // MARK: - Clipboard Sync
+
+    public func startClipboardSync() {
+        clipboardSyncTask?.cancel()
+        clipboardSyncTask = Task { [weak self] in
+            guard let self else { return }
+            var lastPasteboard = NSPasteboard.general.string(forType: .string) ?? ""
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                let current = NSPasteboard.general.string(forType: .string) ?? ""
+                if current != lastPasteboard && !current.isEmpty {
+                    lastPasteboard = current
+                    await self.eventLog.record(.clipboardChanged)
+                    self.appendAudit("Clipboard changed — \(current.count) chars", severity: .info)
+                }
+            }
+        }
+    }
+
+    public func stopClipboardSync() {
+        clipboardSyncTask?.cancel()
+        clipboardSyncTask = nil
+    }
+
+    // MARK: - Emergency Stop Hotkey
+
+    private func startEmergencyStopHotkey() async {
+        await shortcutService.registerShortcutCallback { [weak self] shortcut in
+            guard let self else { return }
+            Task { @MainActor in
+                switch shortcut.name {
+                case "Emergency Stop", "Disconnect":
+                    await self.emergencyStop()
+                default: break
+                }
+            }
+        }
+    }
+
+    public func emergencyStop() async {
+        appendAudit("EMERGENCY STOP triggered", severity: .error)
+        await eventLog.record(.emergencyStop)
+        await refreshFabricEvents()
+        stopClipboardSync()
+        cancelReconnection()
+        await coordinator?.disconnect()
+        await clipboardService.stopWatching()
+        isConnected = false
+        connectedNodeName = nil
+        currentState = .idle
+        statusMessage = "Emergency Stop — disconnected"
+    }
+
+    // MARK: - Trusted Peers
+
+    private func loadTrustedPeers() {
+        if let data = UserDefaults.standard.data(forKey: "elysium.trustedPeers"),
+           let peers = try? JSONDecoder().decode([TrustedPeer].self, from: data) {
+            trustedPeers = peers
+        }
+    }
+
+    private func saveTrustedPeers() {
+        if let data = try? JSONEncoder().encode(trustedPeers) {
+            UserDefaults.standard.set(data, forKey: "elysium.trustedPeers")
+        }
+    }
+
+    public func addTrustedPeer(name: String, host: String, nodeIDHash: Data) {
+        let peer = TrustedPeer(name: name, host: host, nodeIDHash: nodeIDHash)
+        trustedPeers.append(peer)
+        saveTrustedPeers()
+        appendAudit("Trusted peer added: \(name)", severity: .info)
+    }
+
+    public func removeTrustedPeer(_ peer: TrustedPeer) {
+        trustedPeers.removeAll { $0.id == peer.id }
+        saveTrustedPeers()
+        appendAudit("Trusted peer removed: \(peer.name)", severity: .info)
     }
 }

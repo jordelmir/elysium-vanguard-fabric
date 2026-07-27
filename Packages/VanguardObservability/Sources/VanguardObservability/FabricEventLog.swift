@@ -17,10 +17,12 @@ public enum FabricEvent: Sendable {
     case terminalOpened(TerminalSessionID)
     case terminalClosed(TerminalSessionID)
     case clipboardSynced
+    case clipboardChanged
     case artifactReceived(name: String, version: String)
     case jobStarted(String)
     case jobCompleted(String, exitCode: Int32)
     case jobFailed(String, error: String)
+    case emergencyStop
     case error(String)
 
     public var category: String {
@@ -31,9 +33,10 @@ public enum FabricEvent: Sendable {
         case .captureStarted, .captureStopped, .frameDropped: return "capture"
         case .inputDispatched: return "input"
         case .terminalOpened, .terminalClosed: return "terminal"
-        case .clipboardSynced: return "clipboard"
+        case .clipboardSynced, .clipboardChanged: return "clipboard"
         case .artifactReceived: return "artifact"
         case .jobStarted, .jobCompleted, .jobFailed: return "job"
+        case .emergencyStop: return "security"
         case .error: return "error"
         }
     }

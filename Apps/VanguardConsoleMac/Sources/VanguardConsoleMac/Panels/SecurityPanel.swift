@@ -230,10 +230,12 @@ struct FabricEventRow: View {
         case .terminalOpened(let id): return "Terminal opened: \(id.rawValue.uuidString.prefix(8))"
         case .terminalClosed(let id): return "Terminal closed: \(id.rawValue.uuidString.prefix(8))"
         case .clipboardSynced: return "Clipboard synced"
+        case .clipboardChanged: return "Clipboard changed"
         case .artifactReceived(let name, let version): return "Artifact: \(name) v\(version)"
         case .jobStarted(let name): return "Job started: \(name)"
         case .jobCompleted(let name, let code): return "Job completed: \(name) (exit \(code))"
         case .jobFailed(let name, let error): return "Job failed: \(name) - \(error)"
+        case .emergencyStop: return "EMERGENCY STOP triggered"
         case .error(let msg): return "Error: \(msg)"
         }
     }

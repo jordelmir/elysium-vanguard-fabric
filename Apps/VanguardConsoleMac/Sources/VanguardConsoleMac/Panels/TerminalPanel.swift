@@ -7,6 +7,7 @@ struct TerminalPanel: View {
     @State private var selectedSessionID: TerminalSessionID?
     @State private var commandText = ""
     @State private var showNewSession = false
+    @State private var scrollbackLimit = 10000
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +28,21 @@ struct TerminalPanel: View {
                 .font(DS.Typography.micro)
                 .foregroundColor(DS.Colors.success)
             Spacer()
+            if state.isConnected {
+                HStack(spacing: DS.Spacing.xs) {
+                    Circle().fill(DS.Colors.info).frame(width: 5, height: 5)
+                    Text("Remote")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.info)
+                }
+            } else {
+                HStack(spacing: DS.Spacing.xs) {
+                    Circle().fill(DS.Colors.warning).frame(width: 5, height: 5)
+                    Text("Local")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.warning)
+                }
+            }
             let active = state.terminalSessions.filter({ $0.isActive }).count
             Text("\(active) active - \(state.terminalSessions.count) total")
                 .font(DS.Typography.caption)
@@ -67,13 +83,14 @@ struct TerminalPanel: View {
 
     private var outputView: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView([.horizontal, .vertical]) {
                 VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
                     if let session = activeSession {
                         Text(session.output)
                             .font(DS.Typography.mono)
                             .foregroundColor(DS.Colors.success)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
                     } else {
                         Text("No active session").font(DS.Typography.mono).foregroundColor(DS.Colors.textQuaternary)
                     }
@@ -109,7 +126,8 @@ struct TerminalPanel: View {
             Spacer().frame(height: 60)
             Image(systemName: "terminal").font(.system(size: 28)).foregroundColor(DS.Colors.textQuaternary)
             Text("No terminal sessions").font(DS.Typography.subheadline).foregroundColor(DS.Colors.textTertiary)
-            Text("Open a session to a connected node").font(DS.Typography.caption).foregroundColor(DS.Colors.textQuaternary)
+            Text(state.isConnected ? "Open a session on the connected node" : "Connect to a node for remote terminal")
+                .font(DS.Typography.caption).foregroundColor(DS.Colors.textQuaternary)
             Spacer()
         }.frame(maxWidth: .infinity)
     }
@@ -117,14 +135,18 @@ struct TerminalPanel: View {
     private var newSessionSheet: some View {
         VStack(spacing: DS.Spacing.lg) {
             Text("NEW TERMINAL SESSION").font(DS.Typography.micro).foregroundColor(DS.Colors.success)
-            Text("Opens a real PTY shell via POSIXTerminalService")
+            Text(state.isConnected ? "Opens a remote PTY on the connected node" : "Opens a local PTY shell")
                 .font(DS.Typography.caption).foregroundColor(DS.Colors.textQuaternary)
             if state.discoveredNodes.isEmpty {
-                Text("No nodes connected").font(DS.Typography.caption).foregroundColor(DS.Colors.textTertiary)
+                Text("No nodes discovered").font(DS.Typography.caption).foregroundColor(DS.Colors.textTertiary)
             } else {
                 ForEach(state.discoveredNodes) { node in
                     Button {
-                        state.openTerminalSession(nodeName: node.name)
+                        if state.isConnected {
+                            state.openRemoteTerminalSession(nodeName: node.name)
+                        } else {
+                            state.openTerminalSession(nodeName: node.name)
+                        }
                         showNewSession = false
                     } label: {
                         HStack {
@@ -144,7 +166,11 @@ struct TerminalPanel: View {
 
     private func sendCommand() {
         guard let session = activeSession, !commandText.isEmpty else { return }
-        state.sendTerminalCommand(session, command: commandText)
+        if state.isConnected {
+            state.sendRemoteTerminalInput(session, command: commandText)
+        } else {
+            state.sendTerminalCommand(session, command: commandText)
+        }
         commandText = ""
     }
 

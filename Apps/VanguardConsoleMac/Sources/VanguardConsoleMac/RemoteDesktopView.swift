@@ -8,12 +8,14 @@ import VanguardProtocol
 import VanguardInput
 import VanguardRender
 import VanguardSession
+import MetalKit
 
 struct RemoteDesktopView: View {
     let nodeName: String
     @StateObject private var renderer = RemoteDesktopState()
     @EnvironmentObject private var consoleState: ConsoleAppState
     @State private var isFullscreen = false
+    @State private var metalView: MTKView?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,7 +25,12 @@ struct RemoteDesktopView: View {
             Divider().background(Color.white.opacity(0.04))
             statusBar
         }
-        .task { await renderer.startReceiving(consoleState: consoleState) }
+        .task {
+            await renderer.startReceiving(consoleState: consoleState)
+            if let view = metalView {
+                renderer.setupMetalView(view)
+            }
+        }
         .onDisappear { Task { await renderer.stop() } }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             renderer.isConnected = true
@@ -89,30 +96,19 @@ struct RemoteDesktopView: View {
         ZStack {
             Color.black
 
-            if let nsImage = renderer.currentImage {
-                Image(nsImage: nsImage)
+            MetalRepresentableView(metalView: $metalView)
+                .onAppear {
+                    if let view = metalView {
+                        renderer.setupMetalView(view)
+                    }
+                }
+
+            if renderer.currentImage != nil {
+                Image(nsImage: renderer.currentImage!)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .transition(.opacity)
-                    .animation(.easeInOut(duration: 0.1), value: renderer.currentImage)
-            } else {
-                VStack(spacing: DS.Spacing.lg) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                            .frame(width: 72, height: 72)
-                        Image(systemName: "display.trianglebadge.exclamationmark")
-                            .font(.system(size: 28, weight: .medium))
-                            .foregroundColor(DS.Colors.textQuaternary)
-                    }
-                    Text("WAITING FOR STREAM")
-                        .font(DS.Typography.micro)
-                        .foregroundColor(DS.Colors.textQuaternary)
-                        .tracking(3)
-                    Text("Connect to a node to start receiving video")
-                        .font(DS.Typography.caption)
-                        .foregroundColor(DS.Colors.textQuaternary)
-                }
+                    .allowsHitTesting(false)
+                    .opacity(renderer.useMetalFallback ? 1 : 0)
             }
 
             if renderer.showCrosshair {
@@ -133,6 +129,7 @@ struct RemoteDesktopView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(DesktopHoverModifier(renderer: renderer))
         .modifier(DesktopTapModifier(renderer: renderer, consoleState: consoleState))
+        .modifier(DesktopScrollModifier(renderer: renderer, consoleState: consoleState))
     }
 
     private var statusBar: some View {
@@ -169,24 +166,54 @@ struct RemoteDesktopView: View {
     }
 }
 
+struct MetalRepresentableView: NSViewRepresentable {
+    @Binding var metalView: MTKView?
+
+    func makeNSView(context: Context) -> MTKView {
+        let view = MTKView()
+        view.isPaused = true
+        view.enableSetNeedsDisplay = false
+        view.framebufferOnly = false
+        view.preferredFramesPerSecond = 60
+        view.colorPixelFormat = .bgra8Unorm
+        DispatchQueue.main.async {
+            self.metalView = view
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: MTKView, context: Context) {}
+}
+
 struct DesktopHoverModifier: ViewModifier {
     @ObservedObject var renderer: RemoteDesktopState
     func body(content: Content) -> some View {
         if #available(macOS 14.0, *) {
-            content.onContinuousHover { phase in
-                switch phase {
-                case .active(let location):
-                    renderer.cursorX = location.x
-                    renderer.cursorY = location.y
-                    renderer.showCrosshair = true
-                case .ended:
-                    renderer.showCrosshair = false
+            content
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        renderer.cursorX = location.x
+                        renderer.cursorY = location.y
+                        renderer.showCrosshair = true
+                        Task {
+                            let frame = renderer.currentFrameSize
+                            guard frame.width > 0, frame.height > 0 else { return }
+                            let normalizedX = location.x / frame.width
+                            let normalizedY = 1.0 - (location.y / frame.height)
+                            try? await renderer.consoleState?.sendInputEvent(
+                                .mouseMove(normalizedX: normalizedX, normalizedY: normalizedY, sequence: UInt64(Date().timeIntervalSinceReferenceDate * 1000))
+                            )
+                        }
+                    case .ended:
+                        renderer.showCrosshair = false
+                    }
                 }
-            }
         } else {
-            content.onHover { inside in
-                renderer.showCrosshair = inside
-            }
+            content
+                .onHover { inside in
+                    renderer.showCrosshair = inside
+                }
         }
     }
 }
@@ -195,33 +222,32 @@ struct DesktopTapModifier: ViewModifier {
     @ObservedObject var renderer: RemoteDesktopState
     var consoleState: ConsoleAppState
     func body(content: Content) -> some View {
-        if #available(macOS 14.0, *) {
-            content.onTapGesture { location in
-                Task {
-                    let frame = renderer.currentFrameSize
-                    guard frame.width > 0, frame.height > 0 else { return }
-                    let normalizedX = location.x / frame.width
-                    let normalizedY = 1.0 - (location.y / frame.height)
-                    let event = RemoteInputEvent.mouseButton(
-                        button: .left, phase: .down,
-                        normalizedX: normalizedX, normalizedY: normalizedY
-                    )
-                    try? await consoleState.sendInputEvent(event)
+        content.gesture(
+            DragGesture(minimumDistance: 0)
+                .onEnded { value in
+                    Task {
+                        let frame = renderer.currentFrameSize
+                        guard frame.width > 0, frame.height > 0 else { return }
+                        let normalizedX = value.location.x / frame.width
+                        let normalizedY = 1.0 - (value.location.y / frame.height)
+                        try? await consoleState.sendInputEvent(
+                            .mouseButton(button: .left, phase: .down, normalizedX: normalizedX, normalizedY: normalizedY)
+                        )
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        try? await consoleState.sendInputEvent(
+                            .mouseButton(button: .left, phase: .up, normalizedX: normalizedX, normalizedY: normalizedY)
+                        )
+                    }
                 }
-            }
-        } else {
-            content.onTapGesture {
-                Task {
-                    let frame = renderer.currentFrameSize
-                    guard frame.width > 0, frame.height > 0 else { return }
-                    let event = RemoteInputEvent.mouseButton(
-                        button: .left, phase: .down,
-                        normalizedX: 0.5, normalizedY: 0.5
-                    )
-                    try? await consoleState.sendInputEvent(event)
-                }
-            }
-        }
+        )
+    }
+}
+
+struct DesktopScrollModifier: ViewModifier {
+    @ObservedObject var renderer: RemoteDesktopState
+    var consoleState: ConsoleAppState
+    func body(content: Content) -> some View {
+        content
     }
 }
 
@@ -236,17 +262,26 @@ final class RemoteDesktopState: ObservableObject {
     @Published var cursorY: CGFloat = 0
     @Published var isConnected = false
     @Published var pipelineStats: PipelineStats?
+    @Published var useMetalFallback = true
 
     var currentFrameSize: CGSize { currentImage?.size ?? .zero }
+    weak var consoleState: ConsoleAppState?
 
     private var frameCount = 0
     private var lastFPSTime = Date()
     private var receiveTask: Task<Void, any Error>?
-    private var renderer: VideoMetalRenderer?
+    private var metalRenderer: VideoMetalRenderer?
     private var statsTask: Task<Void, Never>?
 
+    func setupMetalView(_ view: MTKView) {
+        let renderer = VideoMetalRenderer()
+        renderer.setMTKView(view)
+        self.metalRenderer = renderer
+        Task { try? await renderer.startRendering() }
+    }
+
     func startReceiving(consoleState: ConsoleAppState) async {
-        renderer = VideoMetalRenderer()
+        self.consoleState = consoleState
         isConnected = true
         receiveTask = Task { [weak self] in
             guard let self = self else { return }
@@ -260,8 +295,14 @@ final class RemoteDesktopState: ObservableObject {
                             self.frameCount = 0
                             self.lastFPSTime = now
                         }
-                        if let image = self.createImage(from: sendableFrame.pixelBuffer) {
-                            self.currentImage = image
+                        let pb = sendableFrame.pixelBuffer
+                        if self.metalRenderer != nil {
+                            self.useMetalFallback = false
+                            Task { try? await self.metalRenderer?.renderPixelBuffer(pb) }
+                        } else {
+                            if let image = self.createImage(from: pb) {
+                                self.currentImage = image
+                            }
                         }
                     }
                 }
@@ -273,13 +314,17 @@ final class RemoteDesktopState: ObservableObject {
         }
     }
 
-    func requestKeyframe() async {}
+    func requestKeyframe() async {
+        try? await consoleState?.sendInputEvent(.releaseAll)
+    }
+
     func stop() async {
         receiveTask?.cancel()
         receiveTask = nil
         statsTask?.cancel()
         statsTask = nil
         isConnected = false
+        await metalRenderer?.stopRendering()
     }
 
     private func createImage(from pixelBuffer: CVPixelBuffer) -> NSImage? {
