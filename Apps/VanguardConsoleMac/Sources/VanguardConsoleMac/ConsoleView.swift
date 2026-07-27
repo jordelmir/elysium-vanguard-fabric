@@ -10,6 +10,8 @@ enum PanelTab: String, CaseIterable {
     case terminal = "Terminal"
     case agents = "Agents"
     case security = "Security"
+    case observatory = "Observatory"
+    case trustedPeers = "Trusted"
     case settings = "Settings"
 
     var icon: String {
@@ -22,6 +24,8 @@ enum PanelTab: String, CaseIterable {
         case .terminal: return "terminal"
         case .agents: return "brain.head.profile"
         case .security: return "shield.checkered"
+        case .observatory: return "gauge.with.dots.needle.67percent"
+        case .trustedPeers: return "lock.shield"
         case .settings: return "gearshape.fill"
         }
     }
@@ -36,6 +40,8 @@ enum PanelTab: String, CaseIterable {
         case .terminal: return DS.Colors.success
         case .agents: return DS.Colors.warning
         case .security: return DS.Colors.error
+        case .observatory: return DS.Colors.info
+        case .trustedPeers: return DS.Colors.accent
         case .settings: return DS.Colors.textTertiary
         }
     }
@@ -233,6 +239,12 @@ struct ConsoleView: View {
                 .environmentObject(state)
         case .security:
             SecurityPanel()
+                .environmentObject(state)
+        case .observatory:
+            ObservatoryPanel()
+                .environmentObject(state)
+        case .trustedPeers:
+            TrustedPeersPanel()
                 .environmentObject(state)
         case .settings:
             SettingsPanel()
