@@ -40,8 +40,17 @@ let package = Package(
         .library(name: "VanguardPolicy", targets: ["VanguardPolicy"]),
         .library(name: "VanguardObservability", targets: ["VanguardObservability"]),
         .library(name: "VanguardUpdates", targets: ["VanguardUpdates"]),
+        .library(name: "CSystemMetrics", targets: ["CSystemMetrics"]),
     ],
     targets: [
+        .target(
+            name: "CSystemMetrics",
+            path: "Packages/SystemMetrics/Sources/CSystemMetrics",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+            ]
+        ),
         .target(
             name: "VanguardDomain",
             path: "Packages/VanguardDomain/Sources/VanguardDomain"
@@ -396,6 +405,13 @@ let package = Package(
                 "VanguardClipboard",
                 "VanguardSecurity",
                 "VanguardAudit",
+                "VanguardScheduler",
+                "VanguardCompute",
+                "VanguardWorkspace",
+                "VanguardObservability",
+                "VanguardAgents",
+                "VanguardPolicy",
+                "CSystemMetrics",
             ],
             path: "Apps/VanguardConsoleMac/Sources/VanguardConsoleMac",
             linkerSettings: [

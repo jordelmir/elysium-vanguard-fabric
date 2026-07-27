@@ -1,27 +1,39 @@
 import SwiftUI
 import VanguardUI
 import VanguardDomain
+import VanguardUpdates
 
 struct SettingsPanel: View {
     @EnvironmentObject private var state: ConsoleAppState
-    @State private var selectedSection: SettingsSection = .general
-
-    enum SettingsSection: String, CaseIterable {
-        case general = "General"
-        case network = "Network"
-        case security = "Security"
-        case display = "Display"
-        case about = "About"
-    }
+    @AppStorage("vanguard.darkMode") private var darkMode = true
+    @AppStorage("vanguard.hardwareAccel") private var hardwareAccel = true
+    @AppStorage("vanguard.showFPS") private var showFPS = true
+    @State private var cpuWeight: Double = 0.25
+    @State private var memoryWeight: Double = 0.15
+    @State private var localityWeight: Double = 0.20
+    @State private var latencyWeight: Double = 0.10
+    @State private var reliabilityWeight: Double = 0.15
+    @State private var thermalWeight: Double = 0.10
+    @State private var energyWeight: Double = 0.05
 
     var body: some View {
         VStack(spacing: 0) {
             panelHeader
             Divider().background(Color.white.opacity(0.04))
-            sectionPicker
-            Divider().background(Color.white.opacity(0.04))
             settingsContent
         }
+        .onAppear { syncFromBackend() }
+    }
+
+    private func syncFromBackend() {
+        let w = state.schedulerWeights
+        cpuWeight = w.cpuWeight
+        memoryWeight = w.memoryWeight
+        localityWeight = w.localityWeight
+        latencyWeight = w.latencyWeight
+        reliabilityWeight = w.reliabilityWeight
+        thermalWeight = w.thermalWeight
+        energyWeight = w.energyWeight
     }
 
     private var panelHeader: some View {
@@ -29,219 +41,153 @@ struct SettingsPanel: View {
             Label("SETTINGS", systemImage: "gearshape.fill")
                 .font(DS.Typography.micro)
                 .foregroundColor(DS.Colors.textTertiary)
-                
             Spacer()
         }
         .padding(DS.Spacing.lg)
     }
 
-    private var sectionPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: DS.Spacing.xs) {
-                ForEach(SettingsSection.allCases, id: \.self) { section in
-                    Button { selectedSection = section } label: {
-                        Text(section.rawValue)
-                            .font(DS.Typography.caption)
-                            .foregroundColor(selectedSection == section ? DS.Colors.accent : DS.Colors.textTertiary)
-                            .padding(.horizontal, DS.Spacing.md)
-                            .padding(.vertical, DS.Spacing.xs)
-                            .glass(style: selectedSection == section ? .colored(DS.Colors.accent) : .ultraThin, cornerRadius: DS.Radius.pill)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, DS.Spacing.lg)
-            .padding(.vertical, DS.Spacing.sm)
-        }
-    }
-
     private var settingsContent: some View {
         ScrollView {
             VStack(spacing: DS.Spacing.md) {
-                switch selectedSection {
-                case .general: generalSettings
-                case .network: networkSettings
-                case .security: securitySettings
-                case .display: displaySettings
-                case .about: aboutSection
-                }
-            }
-            .padding(DS.Spacing.md)
+                generalSection
+                networkSection
+                securitySection
+                schedulerSection
+                displaySection
+                aboutSection
+            }.padding(DS.Spacing.md)
         }
     }
 
-    private var generalSettings: some View {
-        VStack(spacing: DS.Spacing.sm) {
-            SettingsGroup(title: "APPLICATION") {
-                SettingsRow(label: "Console Name", value: state.consoleName, icon: "person.fill")
-                SettingsRow(label: "Version", value: "0.1.0", icon: "info.circle")
-                SettingsRow(label: "Build", value: "2026.07", icon: "hammer.fill")
-            }
-            SettingsGroup(title: "BEHAVIOR") {
-                ToggleRow(label: "Auto-scan on launch", icon: "antenna.radiowaves.left.and.right", isOn: true)
-                ToggleRow(label: "Connect to last node", icon: "link", isOn: true)
-                ToggleRow(label: "Start in menu bar", icon: "menubar.rectangle", isOn: true)
+    private var generalSection: some View {
+        SettingsGroup(title: "GENERAL", icon: "gearshape") {
+            SettingsRow(label: "Version", value: "v0.1.0-alpha")
+            SettingsRow(label: "Build", value: "2026.01.25")
+            SettingsRow(label: "Node", value: state.connectedNodeName ?? "Disconnected")
+        }
+    }
+
+    private var networkSection: some View {
+        SettingsGroup(title: "NETWORK", icon: "network") {
+            SettingsRow(label: "Protocol", value: "Elysium v1.0")
+            SettingsRow(label: "Service Type", value: "_elysium-vanguard._tcp")
+            SettingsRow(label: "Port", value: "49494")
+            SettingsRow(label: "TLS", value: "TLS 1.3 (Mutual)")
+            SettingsRow(label: "Connected Nodes", value: "\(state.discoveredNodes.filter({ $0.status == .online }).count)")
+        }
+    }
+
+    private var securitySection: some View {
+        SettingsGroup(title: "SECURITY", icon: "lock.shield") {
+            SettingsRow(label: "Model", value: "Zero Trust")
+            SettingsRow(label: "Capabilities", value: "\(state.grantedCapabilities.count) granted")
+            SettingsRow(label: "Audit Entries", value: "\(state.auditEntries.count)")
+            SettingsRow(label: "Fabric Events", value: "\(state.fabricEvents.count)")
+        }
+    }
+
+    private var schedulerSection: some View {
+        SettingsGroup(title: "SCHEDULER WEIGHTS", icon: "slider.horizontal.3") {
+            WeightSlider(label: "CPU", value: $cpuWeight, color: DS.Colors.info)
+            WeightSlider(label: "Memory", value: $memoryWeight, color: DS.Colors.warning)
+            WeightSlider(label: "Locality", value: $localityWeight, color: DS.Colors.accent)
+            WeightSlider(label: "Latency", value: $latencyWeight, color: DS.Colors.success)
+            WeightSlider(label: "Reliability", value: $reliabilityWeight, color: DS.Colors.info)
+            WeightSlider(label: "Thermal", value: $thermalWeight, color: DS.Colors.error)
+            WeightSlider(label: "Energy", value: $energyWeight, color: DS.Colors.success)
+            HStack {
+                let total = cpuWeight + memoryWeight + localityWeight + latencyWeight + reliabilityWeight + thermalWeight + energyWeight
+                Text("Total: \(Int(total * 100))%")
+                    .font(DS.Typography.caption)
+                    .foregroundColor(DS.Colors.textQuaternary)
+                Spacer()
+                ElysiumButton(title: "Apply", icon: "checkmark", color: DS.Colors.accent) {
+                    let weights = ConsoleAppState.SchedulerWeights(
+                        cpuWeight: cpuWeight, memoryWeight: memoryWeight,
+                        localityWeight: localityWeight, latencyWeight: latencyWeight,
+                        reliabilityWeight: reliabilityWeight, thermalWeight: thermalWeight,
+                        energyWeight: energyWeight
+                    )
+                    state.updateSchedulerWeights(weights)
+                }.controlSize(.small)
             }
         }
     }
 
-    private var networkSettings: some View {
-        VStack(spacing: DS.Spacing.sm) {
-            SettingsGroup(title: "CONNECTION") {
-                SettingsRow(label: "Service Type", value: "_elysium-vanguard._tcp", icon: "network")
-                SettingsRow(label: "Default Port", value: "49494", icon: "number")
-                SettingsRow(label: "Protocol Version", value: "1.0", icon: "doc.text")
-            }
-            SettingsGroup(title: "TLS") {
-                SettingsRow(label: "Version", value: "TLS 1.3", icon: "lock.fill")
-                SettingsRow(label: "Certificate Pinning", value: "Enabled", icon: "checkmark.shield")
-                SettingsRow(label: "mTLS", value: "Enabled", icon: "lock.shield")
-            }
-        }
-    }
-
-    private var securitySettings: some View {
-        VStack(spacing: DS.Spacing.sm) {
-            SettingsGroup(title: "IDENTITY") {
-                SettingsRow(label: "Signing Key", value: "Ed25519", icon: "key.fill")
-                SettingsRow(label: "Key Agreement", value: "P256", icon: "lock.fill")
-                SettingsRow(label: "Device ID", value: "Persistent", icon: "person.crop.rectangle")
-            }
-            SettingsGroup(title: "AUTHORIZATION") {
-                ToggleRow(label: "Require approval for pairing", icon: "hand.raised", isOn: true)
-                ToggleRow(label: "Require approval for jobs", icon: "hammer", isOn: true)
-                ToggleRow(label: "Audit logging", icon: "doc.text", isOn: true)
-            }
-        }
-    }
-
-    private var displaySettings: some View {
-        VStack(spacing: DS.Spacing.sm) {
-            SettingsGroup(title: "THEME") {
-                ForEach(ThemeProfile.allCases, id: \.self) { theme in
-                    ToggleRow(label: theme.displayName, icon: "paintbrush", isOn: state.currentTheme == theme)
-                }
-            }
-            SettingsGroup(title: "REMOTE DESKTOP") {
-                ToggleRow(label: "Show FPS overlay", icon: "speedometer", isOn: true)
-                ToggleRow(label: "Show crosshair", icon: "scope", isOn: true)
-                ToggleRow(label: "Hardware decoding", icon: "cpu", isOn: true)
-            }
+    private var displaySection: some View {
+        SettingsGroup(title: "DISPLAY", icon: "display") {
+            ToggleRow(label: "Dark Mode", isOn: $darkMode)
+            ToggleRow(label: "Hardware Accel", isOn: $hardwareAccel)
+            ToggleRow(label: "Show FPS Overlay", isOn: $showFPS)
         }
     }
 
     private var aboutSection: some View {
-        VStack(spacing: DS.Spacing.lg) {
-            ZStack {
-                Circle()
-                    .fill(DS.Colors.accent.opacity(0.08))
-                    .frame(width: 72, height: 72)
-                Circle()
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                    .frame(width: 88, height: 88)
-                Image(systemName: "scope")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(DS.Colors.accent)
-                    .neonGlow(DS.Colors.accent, radius: 10)
-            }
-            VStack(spacing: DS.Spacing.xs) {
-                Text("ELYSIUM VANGUARD FABRIC")
-                    .font(DS.Typography.micro)
-                    .foregroundColor(DS.Colors.accent)
-                    
-                Text("v0.1.0")
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textQuaternary)
-            }
-            VStack(spacing: DS.Spacing.xs) {
-                Text("Sovereign local-first remote desktop")
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textTertiary)
-                Text("and distributed computing platform")
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textTertiary)
-            }
-            VStack(spacing: DS.Spacing.xs) {
-                SettingsRow(label: "License", value: "Proprietary", icon: "doc.text")
-                SettingsRow(label: "Copyright", value: "© 2026 Jorge David Del Valle Miranda", icon: "person.fill")
-                SettingsRow(label: "Repository", value: "github.com/jordelmir/elysium-vanguard-fabric", icon: "arrow.up.forward.square")
-            }
+        SettingsGroup(title: "ABOUT", icon: "info.circle") {
+            SettingsRow(label: "Product", value: "Elysium Vanguard Fabric")
+            SettingsRow(label: "Developer", value: "Jorge David Del Valle Miranda")
+            SettingsRow(label: "Copyright", value: "2026 All rights reserved")
+            SettingsRow(label: "License", value: "Proprietary")
         }
-        .frame(maxWidth: .infinity)
     }
 }
 
-struct SettingsGroup: View {
+struct SettingsGroup<Content: View>: View {
     let title: String
-    let content: AnyView
-
-    init(title: String, @ViewBuilder content: () -> some View) {
-        self.title = title
-        self.content = AnyView(content())
-    }
+    let icon: String
+    @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.xs) {
-            Text(title)
-                .font(DS.Typography.micro)
-                .foregroundColor(DS.Colors.textQuaternary)
+        VStack(spacing: 0) {
+            HStack {
+                Label(title, systemImage: icon).font(DS.Typography.micro).foregroundColor(DS.Colors.info)
+                Spacer()
+            }.padding(DS.Spacing.md)
+            VStack(spacing: DS.Spacing.xxs) { content }
                 .padding(.horizontal, DS.Spacing.md)
-            VStack(spacing: DS.Spacing.xs) {
-                content
-            }
-            .glass(style: .ultraThin, cornerRadius: DS.Radius.lg)
-            .adaptiveBorder()
+                .padding(.bottom, DS.Spacing.md)
         }
+        .glass(style: .ultraThin, cornerRadius: DS.Radius.lg)
     }
 }
 
 struct SettingsRow: View {
     let label: String
     let value: String
-    let icon: String
 
     var body: some View {
-        HStack(spacing: DS.Spacing.md) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.accent)
-                .frame(width: 20)
-            Text(label)
-                .font(DS.Typography.caption)
-                .foregroundColor(DS.Colors.textSecondary)
+        HStack {
+            Text(label).font(DS.Typography.caption).foregroundColor(DS.Colors.textTertiary)
             Spacer()
-            Text(value)
-                .font(DS.Typography.caption)
-                .foregroundColor(DS.Colors.textQuaternary)
-        }
-        .padding(.horizontal, DS.Spacing.md)
-        .padding(.vertical, DS.Spacing.sm)
+            Text(value).font(DS.Typography.mono).foregroundColor(DS.Colors.textPrimary)
+        }.padding(.vertical, DS.Spacing.xxs)
+    }
+}
+
+struct WeightSlider: View {
+    let label: String
+    @Binding var value: Double
+    let color: Color
+
+    var body: some View {
+        HStack {
+            Text(label).font(DS.Typography.caption).foregroundColor(DS.Colors.textTertiary).frame(width: 70, alignment: .leading)
+            Slider(value: $value, in: 0...1)
+                .tint(color)
+            Text("\(Int(value * 100))%").font(DS.Typography.mono).foregroundColor(DS.Colors.textPrimary).frame(width: 35, alignment: .trailing)
+        }.padding(.vertical, DS.Spacing.xxs)
     }
 }
 
 struct ToggleRow: View {
     let label: String
-    let icon: String
-    let isOn: Bool
+    @Binding var isOn: Bool
 
     var body: some View {
-        HStack(spacing: DS.Spacing.md) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.accent)
-                .frame(width: 20)
-            Text(label)
-                .font(DS.Typography.caption)
-                .foregroundColor(DS.Colors.textSecondary)
+        HStack {
+            Text(label).font(DS.Typography.caption).foregroundColor(DS.Colors.textTertiary)
             Spacer()
-            Circle()
-                .fill(isOn ? DS.Colors.success : DS.Colors.textQuaternary)
-                .frame(width: 8, height: 8)
-            Text(isOn ? "ON" : "OFF")
-                .font(DS.Typography.micro)
-                .foregroundColor(isOn ? DS.Colors.success : DS.Colors.textQuaternary)
-        }
-        .padding(.horizontal, DS.Spacing.md)
-        .padding(.vertical, DS.Spacing.sm)
+            Toggle("", isOn: $isOn).labelsHidden().tint(DS.Colors.accent)
+        }.padding(.vertical, DS.Spacing.xxs)
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 import VanguardUI
 import VanguardDomain
+import VanguardScheduler
 
 struct NodesPanel: View {
     @EnvironmentObject private var state: ConsoleAppState
@@ -22,9 +23,11 @@ struct NodesPanel: View {
             Label("NODOS", systemImage: "network")
                 .font(DS.Typography.micro)
                 .foregroundColor(DS.Colors.info)
-                
             Spacer()
-            Text("\(state.discoveredNodes.count) found")
+            Text("\(state.discoveredNodes.filter({ $0.status == .online }).count) online")
+                .font(DS.Typography.caption)
+                .foregroundColor(DS.Colors.success)
+            Text("\(state.discoveredNodes.count) total")
                 .font(DS.Typography.caption)
                 .foregroundColor(DS.Colors.textQuaternary)
         }
@@ -65,6 +68,8 @@ struct NodeDetailCard: View {
     let node: ConsoleAppState.DiscoveredNode
     @State private var isHovered = false
 
+    private var descriptor: NodeResourceDescriptor? { node.resourceDescriptor }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: DS.Spacing.md) {
@@ -73,36 +78,67 @@ struct NodeDetailCard: View {
                     Text(node.name)
                         .font(DS.Typography.headline)
                         .foregroundColor(DS.Colors.textPrimary)
-                    Text(node.host)
+                    Text("\(node.host) · \(node.advertisement.architecture.rawValue)")
                         .font(DS.Typography.caption)
                         .foregroundColor(DS.Colors.textQuaternary)
                 }
                 Spacer()
-                if node.status == .connecting {
-                    ProgressView().scaleEffect(0.5)
-                } else {
-                    Text(node.status == .online ? "ONLINE" : "OFFLINE")
-                        .font(DS.Typography.micro)
-                        .foregroundColor(node.status == .online ? DS.Colors.success : DS.Colors.textQuaternary)
+                if let d = descriptor {
+                    Text("\(d.physicalCPUCount) cores · \(d.totalMemoryBytes / (1024*1024*1024))GB RAM")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textQuaternary)
                 }
+                Text(node.status == .online ? "ONLINE" : node.status == .connecting ? "CONNECTING" : "OFFLINE")
+                    .font(DS.Typography.micro)
+                    .foregroundColor(node.status == .online ? DS.Colors.success : node.status == .connecting ? DS.Colors.warning : DS.Colors.textQuaternary)
             }
             .padding(DS.Spacing.md)
 
             Divider().background(Color.white.opacity(0.04))
 
             HStack(spacing: DS.Spacing.lg) {
-                ResourceBar(icon: "cpu", label: "CPU", value: 0.38, color: DS.Colors.info)
-                ResourceBar(icon: "memorychip", label: "RAM", value: 0.71, color: DS.Colors.warning)
-                ResourceBar(icon: "internaldrive", label: "Disk", value: 0.45, color: DS.Colors.accent)
-                ResourceBar(icon: "thermometer", label: "Temp", value: 0.32, color: DS.Colors.success)
+                ResourceBar(icon: "cpu", label: "CPU", value: descriptor?.currentCPULoad ?? 0, color: DS.Colors.info)
+                ResourceBar(icon: "memorychip", label: "RAM", value: ramUsage, color: DS.Colors.warning)
+                ResourceBar(icon: "internaldrive", label: "Disk", value: diskUsage, color: DS.Colors.accent)
+                ResourceBar(icon: "thermometer", label: "Thermal", value: descriptor?.thermalState.schedulerScore ?? 0.8, color: DS.Colors.success)
             }
             .padding(DS.Spacing.md)
+
+            if let d = descriptor {
+                Divider().background(Color.white.opacity(0.04))
+                HStack(spacing: DS.Spacing.md) {
+                    Label("\(d.currentJobCount) jobs", systemImage: "hammer.fill")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textTertiary)
+                    Spacer()
+                    if let battery = d.batteryState {
+                        Label(battery.displayName, systemImage: battery == .charging ? "battery.100.bolt" : "battery.75")
+                            .font(DS.Typography.caption)
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+                    Label(d.operatingSystem.version, systemImage: "laptopcomputer")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(DS.Colors.textQuaternary)
+                }
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.sm)
+            }
         }
         .glass(style: isHovered ? .colored(DS.Colors.accent) : .ultraThin, cornerRadius: DS.Radius.lg)
         .adaptiveBorder(highlighted: isHovered)
         .scaleEffect(isHovered ? 1.005 : 1.0)
         .onHover { isHovered = $0 }
         .animation(DS.Animation.springFast, value: isHovered)
+    }
+
+    private var ramUsage: Double {
+        guard let d = descriptor, d.totalMemoryBytes > 0 else { return 0 }
+        return 1.0 - Double(d.availableMemoryBytes) / Double(d.totalMemoryBytes)
+    }
+
+    private var diskUsage: Double {
+        guard let d = descriptor, d.totalStorageBytes > 0 else { return 0 }
+        return 1.0 - Double(d.availableStorageBytes) / Double(d.totalStorageBytes)
     }
 }
 
@@ -124,12 +160,8 @@ struct ResourceBar: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(color.opacity(0.12))
-                        .frame(height: 4)
-                    Capsule()
-                        .fill(color)
-                        .frame(width: geo.size.width * min(value, 1.0), height: 4)
+                    Capsule().fill(color.opacity(0.12)).frame(height: 4)
+                    Capsule().fill(color).frame(width: geo.size.width * min(value, 1.0), height: 4)
                 }
             }
             .frame(height: 4)

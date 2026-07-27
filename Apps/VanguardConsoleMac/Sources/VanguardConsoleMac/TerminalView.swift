@@ -16,8 +16,11 @@ struct TerminalView: View {
             Divider().background(DS.Colors.success.opacity(0.15))
             inputBar
         }
-        .task { await terminalState.openTerminal(consoleState: consoleState) }
-        .onDisappear { Task { await terminalState.closeTerminal(consoleState: consoleState) } }
+        .onAppear {
+            if terminalState.output.isEmpty {
+                terminalState.output = "Session started\n"
+            }
+        }
     }
 
     private var header: some View {
@@ -97,9 +100,9 @@ struct TerminalView: View {
                 .textFieldStyle(.plain)
                 .font(DS.Typography.mono)
                 .foregroundColor(DS.Colors.success)
-                .onSubmit { terminalState.sendInput() }
+                .onSubmit { terminalState.sendInput(consoleState: consoleState) }
 
-            Button(action: { terminalState.sendInput() }) {
+            Button(action: { terminalState.sendInput(consoleState: consoleState) }) {
                 Image(systemName: "return")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(terminalState.input.isEmpty ? DS.Colors.textQuaternary : DS.Colors.success)
@@ -122,54 +125,23 @@ final class TerminalViewState: ObservableObject {
     @Published var wordWrap = false
     @Published var shell = "/bin/zsh"
 
-    private var sessionID: TerminalSessionID?
-    private var outputTask: Task<Void, Never>?
+    private var trackedSession: ConsoleAppState.TrackedTerminalSession?
     private var commandHistory: [String] = []
     private var historyIndex: Int = -1
-    private weak var consoleState: ConsoleAppState?
 
-    func openTerminal(consoleState: ConsoleAppState) async {
-        self.consoleState = consoleState
-        let config = TerminalConfiguration(shell: "/bin/zsh", columns: 80, rows: 24)
-        do {
-            let handle = try await consoleState.openTerminal(configuration: config)
-            sessionID = handle.sessionID
-            isOpen = true
-            output = "Session started (pid \(handle.pid))\n"
-            startListeningForOutput(consoleState: consoleState)
-        } catch {
-            output = "Failed to open terminal: \(error.localizedDescription)\n"
-        }
-    }
+    func sendInput(consoleState: ConsoleAppState) {
+        guard let session = trackedSession, !input.isEmpty else { return }
 
-    func sendInput() {
-        guard let sessionID = sessionID, let consoleState = consoleState, !input.isEmpty else { return }
-        
         commandHistory.append(input)
         historyIndex = commandHistory.count
-        
-        Task {
-            let data = (input + "\n").data(using: .utf8) ?? Data()
-            try? await consoleState.sendTerminalInput(sessionID, data: data)
-            output += "$ " + input + "\n"
-            input = ""
-        }
+
+        output += "$ " + input + "\n"
+        consoleState.sendTerminalCommand(session, command: input)
+        input = ""
     }
 
-    func clearOutput() {
-        output = ""
-    }
-
-    func toggleWrap() {
-        wordWrap.toggle()
-    }
-
-    func closeTerminal(consoleState: ConsoleAppState) async {
-        outputTask?.cancel()
-        if let sessionID = sessionID { try? await consoleState.closeTerminal(sessionID) }
-        isOpen = false
-    }
-
+    func clearOutput() { output = "" }
+    func toggleWrap() { wordWrap.toggle() }
     func toggleFullscreen() { isFullscreen.toggle() }
 
     func previousCommand() {
@@ -186,15 +158,5 @@ final class TerminalViewState: ObservableObject {
         }
         historyIndex += 1
         input = commandHistory[historyIndex]
-    }
-
-    private func startListeningForOutput(consoleState: ConsoleAppState) {
-        outputTask = Task {
-            for await terminalOutput in consoleState.terminalOutputUpdates {
-                if let text = String(data: terminalOutput.data, encoding: .utf8) {
-                    output += text
-                }
-            }
-        }
     }
 }

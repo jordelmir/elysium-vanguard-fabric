@@ -1,9 +1,13 @@
 import SwiftUI
 import VanguardUI
 import VanguardDomain
+import VanguardAgents
 
 struct AgentsPanel: View {
     @EnvironmentObject private var state: ConsoleAppState
+    @State private var showSubmitPlan = false
+    @State private var planObjective = ""
+    @State private var planSteps = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -11,21 +15,19 @@ struct AgentsPanel: View {
             Divider().background(Color.white.opacity(0.04))
             agentContent
         }
+        .sheet(isPresented: $showSubmitPlan) { submitPlanSheet }
     }
 
     private var panelHeader: some View {
         HStack {
             Label("AGENTS", systemImage: "brain.head.profile")
                 .font(DS.Typography.micro)
-                .foregroundColor(DS.Colors.warning)
-                
+                .foregroundColor(Color.purple)
             Spacer()
-            Circle()
-                .fill(DS.Colors.success)
-                .frame(width: 6, height: 6)
-            Text("Ready")
-                .font(DS.Typography.caption)
-                .foregroundColor(DS.Colors.success)
+            Text("\(state.agentPlans.count) plans")
+                .font(DS.Typography.caption).foregroundColor(DS.Colors.textQuaternary)
+            ElysiumButton(title: "New Plan", icon: "plus", color: Color.purple, style: .bordered) { showSubmitPlan = true }
+                .controlSize(.small)
         }
         .padding(DS.Spacing.lg)
     }
@@ -33,162 +35,137 @@ struct AgentsPanel: View {
     private var agentContent: some View {
         ScrollView {
             VStack(spacing: DS.Spacing.md) {
-                agentStatusCard
-                recentPlans
-                capabilities
-            }
-            .padding(DS.Spacing.md)
-        }
-    }
-
-    private var agentStatusCard: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 18))
-                    .foregroundColor(DS.Colors.warning)
-                VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
-                    Text("Agent Pipeline")
-                        .font(DS.Typography.headline)
-                        .foregroundColor(DS.Colors.textPrimary)
-                    Text("Planner → Policy → Validator → Approval → Compiler")
-                        .font(DS.Typography.caption)
-                        .foregroundColor(DS.Colors.textQuaternary)
+                pipelineStatus
+                Divider().background(Color.white.opacity(0.04))
+                if state.agentPlans.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(state.agentPlans) { plan in
+                        PlanCard(plan: plan)
+                    }
                 }
+            }.padding(DS.Spacing.md)
+        }
+    }
+
+    private var pipelineStatus: some View {
+        VStack(spacing: DS.Spacing.sm) {
+            HStack {
+                Text("PIPELINE STATUS").font(DS.Typography.micro).foregroundColor(Color.purple)
                 Spacer()
-                Text("IDLE")
-                    .font(DS.Typography.micro)
-                    .foregroundColor(DS.Colors.textTertiary)
             }
-            .padding(DS.Spacing.md)
-
-            Divider().background(Color.white.opacity(0.04))
-
-            HStack(spacing: DS.Spacing.lg) {
-                AgentMetric(icon: "checkmark.circle", label: "Executed", value: "0", color: DS.Colors.success)
-                AgentMetric(icon: "clock", label: "Pending", value: "0", color: DS.Colors.warning)
-                AgentMetric(icon: "xmark.circle", label: "Failed", value: "0", color: DS.Colors.error)
-                AgentMetric(icon: "shield.checkered", label: "Approved", value: "0", color: DS.Colors.info)
-            }
-            .padding(DS.Spacing.md)
-        }
-        .glass(style: .ultraThin, cornerRadius: DS.Radius.lg)
-        .adaptiveBorder()
-    }
-
-    private var recentPlans: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.sm) {
-            Text("RECENT PLANS")
-                .font(DS.Typography.micro)
-                .foregroundColor(DS.Colors.textQuaternary)
-                
-
-            VStack(spacing: DS.Spacing.xs) {
-                PlanCard(
-                    objective: "No plans yet",
-                    risk: "readOnly",
-                    steps: 0,
-                    status: "Waiting",
-                    color: DS.Colors.textQuaternary
-                )
+            HStack(spacing: DS.Spacing.xs) {
+                PipelineStep(name: "Planner", icon: "brain", color: Color.purple)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(DS.Colors.textQuaternary)
+                PipelineStep(name: "Policy", icon: "lock.shield", color: DS.Colors.info)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(DS.Colors.textQuaternary)
+                PipelineStep(name: "Validator", icon: "checkmark.seal", color: DS.Colors.success)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(DS.Colors.textQuaternary)
+                PipelineStep(name: "Approval", icon: "person.badge.key", color: DS.Colors.warning)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(DS.Colors.textQuaternary)
+                PipelineStep(name: "Compiler", icon: "gearshape.2", color: DS.Colors.accent)
             }
         }
     }
 
-    private var capabilities: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.sm) {
-            Text("AGENT CAPABILITIES")
-                .font(DS.Typography.micro)
-                .foregroundColor(DS.Colors.textQuaternary)
-                
+    private var emptyState: some View {
+        VStack(spacing: DS.Spacing.lg) {
+            Spacer().frame(height: 40)
+            Image(systemName: "brain.head.profile").font(.system(size: 28)).foregroundColor(DS.Colors.textQuaternary)
+            Text("No agent plans").font(DS.Typography.subheadline).foregroundColor(DS.Colors.textTertiary)
+            Spacer()
+        }.frame(maxWidth: .infinity)
+    }
 
-            LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible())
-            ], spacing: DS.Spacing.xs) {
-                CapabilityBadge(name: "Screen View", enabled: true)
-                CapabilityBadge(name: "Screen Control", enabled: true)
-                CapabilityBadge(name: "Terminal", enabled: true)
-                CapabilityBadge(name: "File Read", enabled: true)
-                CapabilityBadge(name: "File Write", enabled: false)
-                CapabilityBadge(name: "Job Submit", enabled: true)
-                CapabilityBadge(name: "Artifact Read", enabled: true)
-                CapabilityBadge(name: "Policy Admin", enabled: false)
+    private var submitPlanSheet: some View {
+        VStack(spacing: DS.Spacing.lg) {
+            Text("SUBMIT AGENT PLAN").font(DS.Typography.micro).foregroundColor(Color.purple)
+            TextField("Objective (e.g. deploy v2.1 to all nodes)", text: $planObjective).textFieldStyle(.roundedBorder)
+            TextField("Steps (comma separated)", text: $planSteps).textFieldStyle(.roundedBorder)
+            HStack {
+                ElysiumButton(title: "Cancel", icon: "xmark", color: DS.Colors.textTertiary, style: .bordered) { showSubmitPlan = false }
+                ElysiumButton(title: "Submit", icon: "brain.head.profile", color: Color.purple) {
+                    guard !planObjective.isEmpty else { return }
+                    let steps = planSteps.isEmpty ? [] : planSteps.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    state.submitAgentPlan(objective: planObjective, steps: steps)
+                    planObjective = ""; planSteps = ""; showSubmitPlan = false
+                }
             }
         }
+        .padding(DS.Spacing.xxl)
+        .frame(width: 450)
     }
 }
 
-struct AgentMetric: View {
+struct PipelineStep: View {
+    let name: String
     let icon: String
-    let label: String
-    let value: String
     let color: Color
 
     var body: some View {
         VStack(spacing: DS.Spacing.xxs) {
-            HStack(spacing: DS.Spacing.xxs) {
-                Image(systemName: icon)
-                    .font(.system(size: 9))
-                    .foregroundColor(color)
-                Text(label)
-                    .font(DS.Typography.micro)
-                    .foregroundColor(DS.Colors.textQuaternary)
+            ZStack {
+                Circle().fill(color.opacity(0.15)).frame(width: 32, height: 32)
+                Image(systemName: icon).font(.system(size: 12)).foregroundColor(color)
             }
-            Text(value)
-                .font(DS.Typography.monoBold)
-                .foregroundColor(DS.Colors.textPrimary)
+            Text(name).font(DS.Typography.micro).foregroundColor(DS.Colors.textQuaternary)
         }
-        .frame(maxWidth: .infinity)
     }
 }
 
 struct PlanCard: View {
-    let objective: String
-    let risk: String
-    let steps: Int
-    let status: String
-    let color: Color
+    let plan: ConsoleAppState.TrackedAgentPlan
+    @State private var isHovered = false
+
+    private var stateColor: Color {
+        switch plan.state {
+        case .idle: return DS.Colors.textTertiary
+        case .validating, .planning, .policyEvaluation: return DS.Colors.info
+        case .awaitingApproval, .compilingJobs: return DS.Colors.warning
+        case .executing: return Color.purple
+        case .completed: return DS.Colors.success
+        case .failed: return DS.Colors.error
+        case .cancelled: return DS.Colors.textTertiary
+        }
+    }
 
     var body: some View {
         HStack(spacing: DS.Spacing.md) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
+            Image(systemName: iconForState(plan.state))
+                .font(.system(size: 14)).foregroundColor(stateColor)
             VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
-                Text(objective)
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textSecondary)
-                Text("\(steps) steps · \(risk) risk")
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textQuaternary)
+                Text(plan.plan.objective).font(DS.Typography.headline).foregroundColor(DS.Colors.textPrimary)
+                Text(stateLabel(plan.state)).font(DS.Typography.micro).foregroundColor(stateColor)
             }
             Spacer()
-            Text(status)
-                .font(DS.Typography.micro)
-                .foregroundColor(color)
         }
-        .padding(.horizontal, DS.Spacing.md)
-        .padding(.vertical, DS.Spacing.sm)
-        .glass(style: .ultraThin, cornerRadius: DS.Radius.md)
+        .padding(DS.Spacing.md)
+        .glass(style: isHovered ? .colored(DS.Colors.accent) : .ultraThin, cornerRadius: DS.Radius.lg)
+        .adaptiveBorder(highlighted: isHovered)
+        .onHover { isHovered = $0 }
+        .animation(DS.Animation.springFast, value: isHovered)
     }
-}
 
-struct CapabilityBadge: View {
-    let name: String
-    let enabled: Bool
-
-    var body: some View {
-        HStack(spacing: DS.Spacing.xs) {
-            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 9))
-                .foregroundColor(enabled ? DS.Colors.success : DS.Colors.textQuaternary)
-            Text(name)
-                .font(DS.Typography.caption)
-                .foregroundColor(enabled ? DS.Colors.textSecondary : DS.Colors.textQuaternary)
+    private func iconForState(_ s: AgentPipeline.PipelineState) -> String {
+        switch s {
+        case .completed: return "checkmark.circle.fill"
+        case .failed, .cancelled: return "xmark.circle.fill"
+        default: return "arrow.triangle.2.circlepath"
         }
-        .padding(.horizontal, DS.Spacing.sm)
-        .padding(.vertical, DS.Spacing.xs)
-        .glass(style: .ultraThin, cornerRadius: DS.Radius.sm)
+    }
+
+    private func stateLabel(_ s: AgentPipeline.PipelineState) -> String {
+        switch s {
+        case .idle: return "IDLE"
+        case .planning: return "PLANNING"
+        case .validating: return "VALIDATING"
+        case .policyEvaluation: return "POLICY EVAL"
+        case .awaitingApproval: return "AWAITING APPROVAL"
+        case .compilingJobs: return "COMPILING"
+        case .executing: return "EXECUTING"
+        case .completed: return "COMPLETED"
+        case .failed(let err): return "FAILED: \(err)"
+        case .cancelled: return "CANCELLED"
+        }
     }
 }

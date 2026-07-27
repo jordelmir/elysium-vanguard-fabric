@@ -103,6 +103,11 @@ public actor AgentPipeline {
 
     public init() {}
 
+    public func startPlan(_ plan: AgentPlan) {
+        activePlan = plan
+        pipelineState = .validating
+    }
+
     public enum PipelineState: Sendable {
         case idle
         case planning
