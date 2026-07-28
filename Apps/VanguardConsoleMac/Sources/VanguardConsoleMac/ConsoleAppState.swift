@@ -848,7 +848,7 @@ public final class ConsoleAppState: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 switch shortcut.name {
-                case "Emergency Stop", "Disconnect": await self.disconnect()
+                case "Disconnect": await self.disconnect()
                 default: break
                 }
             }
@@ -1009,8 +1009,7 @@ public final class ConsoleAppState: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 switch shortcut.name {
-                case "Emergency Stop", "Disconnect":
-                    await self.emergencyStop()
+                case "Emergency Stop": await self.emergencyStop()
                 default: break
                 }
             }

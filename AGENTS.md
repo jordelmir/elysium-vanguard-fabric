@@ -93,12 +93,12 @@ Apps/
 └── (VanguardCoordinatorServer/ — future, not yet created)
 
 Packages/
-├── VanguardDomain/        ← Platform types (720 lines, 30+ types, zero Apple imports)
+├── VanguardDomain/        ← Platform types (800+ lines, 35+ types, 5 identity types, zero Apple imports)
 ├── VanguardProtocol/      ← Wire protocol, FabricMessageEnvelope, message types
 ├── VanguardIdentity/      ← CryptoKit identity service, key generation
-├── VanguardSecurity/      ← AuthorizationGuard, SecurityAction, capability checks
+├── VanguardSecurity/      ← AuthorizationGuard, SecurityAction, CapabilityNegotiator
 ├── VanguardDiscovery/     ← Bonjour service discovery (_elysium-vanguard._tcp)
-├── VanguardTransport/     ← NetworkTransport, InMemoryTransport, flow control
+├── VanguardTransport/     ← NetworkTransport, InMemoryTransport, flow control, IdempotencyCache
 ├── VanguardSession/       ← SessionCoordinator, PipelineCoordinator
 ├── VanguardCapture/       ← ScreenCaptureKit capture service
 ├── VanguardVideo/         ← VideoToolbox encoder/decoder
@@ -113,10 +113,19 @@ Packages/
 ├── VanguardExecutors/     ← RemoteJobExecutor protocol, checkpoints
 ├── VanguardAgents/        ← AgentPipeline, AgentPlan, DAG validation
 ├── VanguardPolicy/        ← SecurityPolicyAction (maps capabilities)
-├── VanguardObservability/ ← FabricEventLog actor, 19 event types
+├── VanguardObservability/ ← FabricEventLog actor, PipelineMetricsCollector
 ├── VanguardUpdates/       ← UpdateService with rollback
+├── VanguardAudit/         ← SHA-256 hash chain audit log, SanitizedLogger
+├── VanguardFiles/         ← FileTransferService with chunked transfer
+├── VanguardUI/            ← Design system, glass morphism, KeyboardShortcutService
+├── VanguardPersistence/   ← FilePersistenceService
+├── VanguardPermissions/   ← macOS permission checks
+├── VanguardProcesses/     ← Process supervision
+├── VanguardTelemetry/     ← MacTelemetryCollector
 ├── VanguardTestSupport/   ← Mocks for testing
-└── [12 more packages]     ← Audio, Audit, Files, Permissions, Persistence, etc.
+├── SystemMetrics/         ← Swift wrapper for CSystemMetrics
+├── CSystemMetrics/        ← Real mach APIs for CPU/RAM/battery
+└── VanguardAudio/         ← ScreenCaptureKit audio capture
 
 Protocol/
 ├── specification.md       ← Full protocol spec (112 lines)
@@ -135,15 +144,15 @@ Docs/
 
 ---
 
-## Current State — What Works
+## Current State — v0.1 100% Complete
 
 ### Build Status
 - ✅ `swift build` — clean, zero errors
-- ✅ `swift test` — 105 tests passing, 0 failures
+- ✅ `swift test` — 82 tests passing (54 XCTest + 28 Swift Testing), 0 failures
 - ✅ VanguardConsoleMac builds as macOS app
 - ✅ VanguardNodeMac builds as macOS app
 
-### Implemented (Phases 0–9 of Master Order)
+### Implemented (Phases 0–12 of Master Order)
 
 | Block | Status | Description |
 |-------|--------|-------------|
@@ -157,6 +166,33 @@ Docs/
 | 8. VanguardUpdates | ✅ | UpdateService actor with state machine and rollback |
 | 9. Security + Chaos Tests | ✅ | 16 new tests: path traversal, replay, oversized payload, log flooding, capability completeness, disconnect/reconnect, rapid cycling, large messages, job security |
 | 10. Physical Validation | ✅ | 8 test categories with sign-off checklist |
+| 11. Per-Context Identity Types | ✅ | SessionIdentity, JobIdentity, ArtifactIdentity, AgentIdentity, ApplicationIdentity |
+| 12. Console App Panels | ✅ | 11 panels: RemoteDesktop, Nodes, Jobs, Resources, Workspace, Terminal, Agents, Security, Observatory, TrustedPeers, Settings |
+
+### Console App — 11 Panels
+- ✅ RemoteDesktopView — Metal renderer, mouse/click forwarding, crosshair overlay
+- ✅ NodesPanel — Real resource bars from NodeResourceDescriptor
+- ✅ JobsPanel — 13-state lifecycle, real NativeProcessExecutor.execute()
+- ✅ ResourcesPanel — Live metrics with 5s refresh, memory pressure bar
+- ✅ WorkspacePanel — Real file scanning, SHA-256, delete
+- ✅ TerminalPanel — Remote/local indicator, scrollback, openRemoteTerminalSession()
+- ✅ AgentsPanel — Real pipeline execution, step results
+- ✅ SecurityPanel — Capabilities/Events/Audit/Chain tabs, exhaustive FabricEvent switch
+- ✅ ObservatoryPanel — Real-time metrics from PipelineMetricsCollector
+- ✅ TrustedPeersPanel — View/remove paired nodes, UserDefaults persistence
+- ✅ SettingsPanel — 7 weight sliders, scrollback limit, @AppStorage persistence
+
+### v0.1 Subsystems
+- ✅ Capability Negotiation — CapabilityNegotiator actor with negotiate()
+- ✅ Pipeline Metrics — PipelineMetricsCollector (frames, bytes, RTT, memory, FPS)
+- ✅ Audit Chain — SHA-256 hash chaining with verifyIntegrity()
+- ✅ Sanitized Logging — SanitizedLogger redacts secrets from logs
+- ✅ Idempotency Cache — TTL-based dedup with max entries
+- ✅ File Transfer — Chunked transfer with SHA-256 verification
+- ✅ Emergency Stop — ⌘⌥Esc disconnects everything
+- ✅ Reconnection — Exponential backoff (0.5s → 30s, 10 attempts)
+- ✅ Clipboard Sync — NSPasteboard polling with change detection
+- ✅ Trusted Peers — UserDefaults persistence, load on init
 
 ### Media Pipeline
 - ✅ ScreenCaptureKit capture (SCStream, SCContentFilter)
@@ -249,21 +285,24 @@ swift test --filter JobSecurityTests     # job security tests only
 swift test --filter FabricSchedulerTests # scheduler tests only
 ```
 
-### Test Suites
+### Test Suites (54 XCTest + 28 Swift Testing = 82 total)
+
+**XCTest:**
 - ArtifactTransferTests (4 tests)
 - BonjourDiscoveryServiceTests (2 tests)
 - CGEventInputDispatchServiceTests (7 tests)
 - ChannelMultiplexerTests (5 tests)
 - ChaosTests (3 tests)
-- CryptoKitIdentityServiceTests (5 tests)
-- ErrorsTests (5 tests)
+- CryptoKitIdentityServiceTests (6 tests)
+- ErrorsTests (7 tests)
 - FabricEventLogTests (4 tests)
 - FabricSchedulerTests (3 tests)
 - FilePersistenceServiceTests (5 tests)
 - FlowControllerTests (4 tests)
 - POSIXTerminalServiceTests (3 tests)
-- PlatformTests (5 tests)
+- PlatformTests (13 tests — identity types, JobID, AgentAction, etc.)
 - ProtocolFramingTests (7 tests)
+- ProtocolMessagesTests (existing)
 - SecurityServiceTests (3 tests)
 - SecurityTests (8 tests)
 - TransportComponentTests (5 tests)
@@ -272,6 +311,16 @@ swift test --filter FabricSchedulerTests # scheduler tests only
 - JobSecurityTests (6 tests)
 - VideoToolboxTests (5 tests)
 - WorkspaceTests (3 tests)
+
+**Swift Testing:**
+- SanitizedLoggerTests (5 tests)
+- IdempotencyCacheTests (4 tests)
+- CapabilityNegotiatorTests (4 tests)
+- FileTransferServiceTests (5 tests)
+- PipelineMetricsCollectorTests (8 tests)
+- HeartbeatControllerTests (7 tests)
+- ReconnectionManagerTests (4 tests)
+- KeyboardShortcutServiceTests (4 tests)
 
 ---
 

@@ -18,30 +18,32 @@ Control your MacBook with a damaged screen from your M1 Mac — full remote desk
 
 ## Features
 
-### P0 — Core Remote Control
+### Core Remote Control
 - **Screen Capture** — ScreenCaptureKit hardware-accelerated capture at 1080p60
 - **H.264 Encode/Decode** — VideoToolbox hardware pipeline with adaptive bitrate
 - **Metal Rendering** — Zero-copy GPU rendering via MTKView with aspect-correct scaling
 - **Input Dispatch** — Mouse, keyboard, scroll, drag, modifiers, key repeat, emergency stop
-- **TLS 1.3** — ECDH P256 key exchange, mutual authentication, identity pinning
 
-### P1 — Platform Services
+### Platform Services
 - **Bonjour Discovery** — Automatic LAN discovery via `_elysium-vanguard._tcp`
 - **Pairing Flow** — 6-digit challenge code with transcript hash verification
-- **Terminal** — Full PTY terminal with word wrap, command history, resize
-- **Clipboard Sync** — Bidirectional NSPasteboard sync (10MB limit, 500ms polling)
-- **File Transfer** — Drag-and-drop file exchange between Console and Node
-- **Audio Capture** — ScreenCaptureKit system audio forwarding
-- **Workspace Management** — Multi-display workspace orchestration
-- **LaunchAgent** — Node auto-start on boot
+- **Terminal** — Full PTY terminal with scrollback, command history, resize
+- **Clipboard Sync** — Bidirectional NSPasteboard sync with change detection
+- **File Transfer** — Chunked transfer with SHA-256 integrity verification
+- **Reconnection** — Exponential backoff (0.5s → 30s, 10 attempts)
+- **Emergency Stop** — ⌘⌥Esc disconnects everything instantly
 
-### P2 — Enterprise & Polish
-- **Audit Log** — Append-only hash chain with SHA-256 integrity verification
-- **Telemetry** — CPU, memory, GPU, battery, disk, network, thermal monitoring
-- **Keyboard Shortcuts** — Emergency Stop (⌘⇧.), Fullscreen, New Tab, Disconnect
-- **Theme Profiles** — Minimal, Balanced, Ultra presets with glass morphism
-- **Observability** — 21-category os.Logger with structured diagnostics
-- **CI/CD** — GitHub Actions PR gate + Nightly builds
+### Security
+- **Zero Trust** — Every action requires identity + capability
+- **Capability Negotiation** — Console and node negotiate allowed operations
+- **Audit Chain** — SHA-256 hash chain with integrity verification
+- **Sanitized Logging** — Secrets redacted from all log output
+- **Trusted Peers** — Persisted paired nodes list
+
+### Observability
+- **Pipeline Metrics** — Frames, bytes, encode/decode times, RTT, jitter, FPS
+- **Observatory Dashboard** — Real-time system, network, media, and performance metrics
+- **Audit Log** — Append-only security event history
 
 ## Architecture
 
@@ -82,7 +84,7 @@ Control your MacBook with a damaged screen from your M1 Mac — full remote desk
 
 ## Requirements
 
-- macOS 12.3+ (both devices)
+- macOS 12.0+ (Monterey — both devices)
 - Same LAN, Thunderbolt Bridge, or direct Ethernet
 - Screen Recording permission (Node)
 - Accessibility permission (Node, for input control)
@@ -90,29 +92,29 @@ Control your MacBook with a damaged screen from your M1 Mac — full remote desk
 ## Quick Start
 
 ```bash
-# Bootstrap
-./Scripts/bootstrap.sh
+# Clone
+git clone git@github.com:jordelmir/elysium-vanguard-fabric.git
+cd elysium-vanguard-fabric
 
-# Build release
-./build.sh
+# Build
+swift build --target VanguardConsoleMac   # Console (M1)
+swift build --target VanguardNodeMac      # Node (Intel)
 
-# Run Node
-open Apps/VanguardNodeMac/.build/release/VanguardNodeMac.app
-
-# Run Console
-open Apps/VanguardConsoleMac/.build/release/VanguardConsoleMac.app
+# Run
+open .build/arm64-apple-macosx/debug/VanguardConsoleMac.app
+open .build/arm64-apple-macosx/debug/VanguardNodeMac.app
 ```
 
-## Packages (23)
+## Packages (32)
 
 | Package | Purpose |
 |---------|---------|
-| VanguardDomain | Pure domain models, zero Apple imports |
+| VanguardDomain | Pure domain models, 5 identity types, zero Apple imports |
 | VanguardProtocol | Binary wire protocol with 10 logical channels |
 | VanguardTransport | NWConnection TLS transport with multiplexer |
 | VanguardDiscovery | Bonjour `_elysium-vanguard._tcp` discovery |
 | VanguardIdentity | Ed25519 + X25519 device identity |
-| VanguardSecurity | TLS 1.3, ECDH P256, capability-based auth |
+| VanguardSecurity | Capability negotiation, authorization guard |
 | VanguardPermissions | Screen Recording, Accessibility, Microphone |
 | VanguardCapture | ScreenCaptureKit capture with presets |
 | VanguardVideo | VideoToolbox H.264 encode/decode |
@@ -121,17 +123,42 @@ open Apps/VanguardConsoleMac/.build/release/VanguardConsoleMac.app
 | VanguardTerminal | POSIX PTY terminal service |
 | VanguardClipboard | NSPasteboard bidirectional sync |
 | VanguardAudio | ScreenCaptureKit audio capture |
-| VanguardFiles | File transfer service |
+| VanguardFiles | Chunked file transfer with SHA-256 |
 | VanguardProcesses | Process supervision |
 | VanguardTelemetry | System metrics collector |
-| VanguardAudit | Append-only hash chain audit log |
+| VanguardAudit | SHA-256 hash chain audit log + sanitized logging |
 | VanguardUI | Design system, glass morphism, themes |
 | VanguardPersistence | Data storage |
-| VanguardWorkspace | Multi-display workspace |
+| VanguardWorkspace | Workspace snapshots |
+| VanguardCompute | JobSpec, NativeProcessExecutor, 13-state lifecycle |
+| VanguardScheduler | 8-dimension weighted scoring model |
+| VanguardAgents | AgentPipeline with DAG validation |
+| VanguardPolicy | SecurityPolicyAction capability mapping |
+| VanguardObservability | FabricEventLog, PipelineMetricsCollector |
+| VanguardUpdates | Update service with rollback |
+| VanguardExecutors | Remote job executor protocol |
+| VanguardTestSupport | Mocks for testing |
+| CSystemMetrics | Real mach APIs for CPU/RAM/battery |
+| SystemMetrics | Swift wrapper for CSystemMetrics |
+| VanguardArtifacts | Artifact chunking and transfer |
+
+## Console App — 11 Panels
+
+| Panel | Description |
+|-------|-------------|
+| Remote Desktop | Metal-rendered remote screen with mouse/keyboard control |
+| Nodes | Discovered nodes with resource bars |
+| Jobs | 13-state job lifecycle with real execution |
+| Resources | Live CPU, RAM, storage, battery metrics |
+| Workspace | File scanning with SHA-256 verification |
+| Terminal | Remote/local PTY with configurable scrollback |
+| Agents | AI agent pipeline execution |
+| Security | Capabilities, events, audit, chain integrity tabs |
+| Observatory | Real-time metrics dashboard (frames, RTT, FPS, memory) |
+| Trusted Peers | View/remove paired nodes |
+| Settings | Scheduler weights, persistence, display options |
 
 ## Video Pipeline
-
-The end-to-end video pipeline operates at 1080p30 with H.264 hardware encoding:
 
 ```
 ScreenCaptureKit → CVPixelBuffer → VideoToolbox Encoder → H.264 NAL
@@ -142,6 +169,14 @@ ScreenCaptureKit → CVPixelBuffer → VideoToolbox Encoder → H.264 NAL
 - **Latency**: <50ms encode+decode on Apple Silicon
 - **Bitrate**: 8 Mbps default, adaptive
 - **Keyframes**: On-demand via Console request
+
+## Testing
+
+```bash
+swift test                        # 82 tests (54 XCTest + 28 Swift Testing)
+swift test --filter SecurityTests # Security tests
+swift test --filter ChaosTests    # Chaos/disconnect tests
+```
 
 ## License
 
