@@ -1,11 +1,6 @@
 import Foundation
 import VanguardDomain
 
-public struct JobID: Hashable, Sendable, Codable {
-    public let rawValue: UUID
-    public init(rawValue: UUID = UUID()) { self.rawValue = rawValue }
-}
-
 // MARK: - Artifact Reference
 
 public struct ArtifactReference: Codable, Sendable, Equatable {

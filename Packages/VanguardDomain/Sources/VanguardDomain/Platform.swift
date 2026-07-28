@@ -718,3 +718,99 @@ public struct CapabilityGrant: Codable, Sendable {
         isValid && capabilities.contains(capability)
     }
 }
+
+// MARK: - Per-Context Identity Types
+
+public struct SessionIdentity: Sendable, Codable, Hashable {
+    public let sessionID: SessionID
+    public let nodeID: NodeID
+    public let keyPairRef: String
+    public let createdAt: Date
+    public let expiresAt: Date
+
+    public init(sessionID: SessionID, nodeID: NodeID, keyPairRef: String = UUID().uuidString, createdAt: Date = Date(), expiresAt: Date = Date().addingTimeInterval(3600)) {
+        self.sessionID = sessionID
+        self.nodeID = nodeID
+        self.keyPairRef = keyPairRef
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+    }
+
+    public var isValid: Bool { Date() >= createdAt && Date() < expiresAt }
+}
+
+public struct JobIdentity: Sendable, Codable, Hashable {
+    public let jobID: JobID
+    public let ownerNodeID: NodeID
+    public let executorNodeID: NodeID?
+    public let signedBy: NodeID
+    public let signature: Data
+    public let createdAt: Date
+
+    public init(jobID: JobID, ownerNodeID: NodeID, executorNodeID: NodeID? = nil, signedBy: NodeID, signature: Data = Data(), createdAt: Date = Date()) {
+        self.jobID = jobID
+        self.ownerNodeID = ownerNodeID
+        self.executorNodeID = executorNodeID
+        self.signedBy = signedBy
+        self.signature = signature
+        self.createdAt = createdAt
+    }
+}
+
+public struct ArtifactIdentity: Sendable, Codable, Hashable {
+    public let artifactID: UUID
+    public let producerNodeID: NodeID
+    public let sha256: Data
+    public let sizeBytes: UInt64
+    public let signature: Data
+    public let createdAt: Date
+
+    public init(artifactID: UUID = UUID(), producerNodeID: NodeID, sha256: Data, sizeBytes: UInt64, signature: Data = Data(), createdAt: Date = Date()) {
+        self.artifactID = artifactID
+        self.producerNodeID = producerNodeID
+        self.sha256 = sha256
+        self.sizeBytes = sizeBytes
+        self.signature = signature
+        self.createdAt = createdAt
+    }
+}
+
+public struct AgentIdentity: Sendable, Codable {
+    public let agentID: UUID
+    public let ownerNodeID: NodeID
+    public let agentType: String
+    public let riskLevel: AgentRisk
+    public let authorizedActions: [String]
+    public let signature: Data
+    public let createdAt: Date
+
+    public init(agentID: UUID = UUID(), ownerNodeID: NodeID, agentType: String, riskLevel: AgentRisk = .low, authorizedActions: [String] = [], signature: Data = Data(), createdAt: Date = Date()) {
+        self.agentID = agentID
+        self.ownerNodeID = ownerNodeID
+        self.agentType = agentType
+        self.riskLevel = riskLevel
+        self.authorizedActions = authorizedActions
+        self.signature = signature
+        self.createdAt = createdAt
+    }
+}
+
+public struct ApplicationIdentity: Sendable, Codable, Hashable {
+    public let appBundleID: String
+    public let appVersion: String
+    public let signedBy: NodeID
+    public let platform: String
+    public let capabilities: Set<FabricCapability>
+    public let signature: Data
+    public let registeredAt: Date
+
+    public init(appBundleID: String, appVersion: String, signedBy: NodeID, platform: String = "macOS", capabilities: Set<FabricCapability> = [], signature: Data = Data(), registeredAt: Date = Date()) {
+        self.appBundleID = appBundleID
+        self.appVersion = appVersion
+        self.signedBy = signedBy
+        self.platform = platform
+        self.capabilities = capabilities
+        self.signature = signature
+        self.registeredAt = registeredAt
+    }
+}

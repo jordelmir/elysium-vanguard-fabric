@@ -1,5 +1,6 @@
 import SwiftUI
 import VanguardUI
+import VanguardObservability
 
 struct ObservatoryPanel: View {
     @EnvironmentObject private var state: ConsoleAppState
@@ -167,7 +168,9 @@ struct ObservatoryPanel: View {
         isLive = true
         refreshTask = Task {
             while !Task.isCancelled {
-                metrics = ConsoleAppState.gatherLocalSystemMetrics().toObservatoryMetrics(metrics)
+                let sys = ConsoleAppState.gatherLocalSystemMetrics()
+                let pm = state.pipelineMetrics
+                metrics = sys.toObservatoryMetrics(metrics, pipeline: pm)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
@@ -181,10 +184,23 @@ struct ObservatoryPanel: View {
 }
 
 private extension ConsoleAppState.LocalSystemMetrics {
-    func toObservatoryMetrics(_ existing: ObservatoryPanel.ObservatoryMetrics) -> ObservatoryPanel.ObservatoryMetrics {
+    func toObservatoryMetrics(_ existing: ObservatoryPanel.ObservatoryMetrics, pipeline: PipelineMetrics) -> ObservatoryPanel.ObservatoryMetrics {
         var m = existing
         m.cpuLoad = cpuLoad
         m.memoryUsage = totalMemoryBytes - availableMemoryBytes
+        m.framesCaptured = pipeline.framesCaptured
+        m.framesEncoded = pipeline.framesEncoded
+        m.framesDecoded = pipeline.framesDecoded
+        m.framesRendered = pipeline.framesRendered
+        m.framesDropped = pipeline.framesDropped
+        m.fps = pipeline.fps
+        m.bitrate = pipeline.currentBitrate
+        m.rtt = pipeline.smoothedRTT / 1_000_000
+        m.jitter = pipeline.jitter / 1_000_000
+        m.bandwidth = pipeline.effectiveBandwidthMbps
+        m.encodeTimeMs = pipeline.averageEncodeTimeMs
+        m.decodeTimeMs = pipeline.averageDecodeTimeMs
+        m.uptime = pipeline.uptimeSeconds
         return m
     }
 }

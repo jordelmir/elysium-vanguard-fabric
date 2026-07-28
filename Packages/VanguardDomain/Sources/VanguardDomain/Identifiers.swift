@@ -61,3 +61,15 @@ public struct WorkspaceID: RawRepresentable, Codable, Hashable, Sendable {
         self.rawValue = UUID()
     }
 }
+
+public struct JobID: RawRepresentable, Codable, Hashable, Sendable {
+    public let rawValue: UUID
+
+    public init(rawValue: UUID) {
+        self.rawValue = rawValue
+    }
+
+    public init() {
+        self.rawValue = UUID()
+    }
+}

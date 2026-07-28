@@ -8,13 +8,14 @@ struct SettingsPanel: View {
     @AppStorage("vanguard.darkMode") private var darkMode = true
     @AppStorage("vanguard.hardwareAccel") private var hardwareAccel = true
     @AppStorage("vanguard.showFPS") private var showFPS = true
-    @State private var cpuWeight: Double = 0.25
-    @State private var memoryWeight: Double = 0.15
-    @State private var localityWeight: Double = 0.20
-    @State private var latencyWeight: Double = 0.10
-    @State private var reliabilityWeight: Double = 0.15
-    @State private var thermalWeight: Double = 0.10
-    @State private var energyWeight: Double = 0.05
+    @AppStorage("vanguard.scrollbackLimit") private var scrollbackLimit = 10000
+    @AppStorage("vanguard.cpuWeight") private var cpuWeight: Double = 0.25
+    @AppStorage("vanguard.memoryWeight") private var memoryWeight: Double = 0.15
+    @AppStorage("vanguard.localityWeight") private var localityWeight: Double = 0.20
+    @AppStorage("vanguard.latencyWeight") private var latencyWeight: Double = 0.10
+    @AppStorage("vanguard.reliabilityWeight") private var reliabilityWeight: Double = 0.15
+    @AppStorage("vanguard.thermalWeight") private var thermalWeight: Double = 0.10
+    @AppStorage("vanguard.energyWeight") private var energyWeight: Double = 0.05
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,7 @@ struct SettingsPanel: View {
     }
 
     private func syncFromBackend() {
+        state.terminalScrollbackLimit = scrollbackLimit
         let w = state.schedulerWeights
         cpuWeight = w.cpuWeight
         memoryWeight = w.memoryWeight
@@ -64,6 +66,18 @@ struct SettingsPanel: View {
             SettingsRow(label: "Version", value: "v0.1.0-alpha")
             SettingsRow(label: "Build", value: "2026.01.25")
             SettingsRow(label: "Node", value: state.connectedNodeName ?? "Disconnected")
+            VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+                HStack {
+                    Text("Terminal Scrollback").font(DS.Typography.caption).foregroundColor(DS.Colors.textTertiary)
+                    Spacer()
+                    Text("\(scrollbackLimit)").font(DS.Typography.mono).foregroundColor(DS.Colors.textPrimary)
+                }
+                Slider(value: Binding(
+                    get: { Double(scrollbackLimit) },
+                    set: { scrollbackLimit = Int($0); state.terminalScrollbackLimit = scrollbackLimit }
+                ), in: 1000...50000, step: 1000)
+                    .tint(DS.Colors.accent)
+            }
         }
     }
 

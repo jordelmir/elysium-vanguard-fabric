@@ -362,6 +362,11 @@ let package = Package(
             dependencies: ["VanguardFiles", "VanguardTestSupport"],
             path: "Packages/VanguardFiles/Tests"
         ),
+        .testTarget(
+            name: "VanguardUITests",
+            dependencies: ["VanguardUI", "VanguardTestSupport"],
+            path: "Packages/VanguardUI/Tests"
+        ),
 
         // MARK: - App Targets
 

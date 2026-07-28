@@ -47,4 +47,50 @@ final class PlatformTests: XCTestCase {
         let decoded = try JSONDecoder().decode(TrustState.self, from: data)
         XCTAssertEqual(state, decoded)
     }
+
+    func testSessionIdentity() {
+        let id = SessionIdentity(sessionID: SessionID(), nodeID: NodeID())
+        XCTAssertTrue(id.isValid)
+        let expired = SessionIdentity(sessionID: SessionID(), nodeID: NodeID(), createdAt: Date().addingTimeInterval(-7200), expiresAt: Date().addingTimeInterval(-3600))
+        XCTAssertFalse(expired.isValid)
+    }
+
+    func testJobIdentity() {
+        let id = JobIdentity(jobID: JobID(), ownerNodeID: NodeID(), signedBy: NodeID())
+        XCTAssertEqual(id.ownerNodeID, id.ownerNodeID)
+        XCTAssertNil(id.executorNodeID)
+    }
+
+    func testArtifactIdentityCodable() throws {
+        let id = ArtifactIdentity(producerNodeID: NodeID(), sha256: Data(repeating: 0xAA, count: 32), sizeBytes: 1024)
+        let data = try JSONEncoder().encode(id)
+        let decoded = try JSONDecoder().decode(ArtifactIdentity.self, from: data)
+        XCTAssertEqual(id.artifactID, decoded.artifactID)
+        XCTAssertEqual(id.sizeBytes, decoded.sizeBytes)
+    }
+
+    func testAgentIdentity() {
+        let id = AgentIdentity(ownerNodeID: NodeID(), agentType: "planner", riskLevel: .low, authorizedActions: ["inspectRepository", "readFile"])
+        XCTAssertEqual(id.authorizedActions.count, 2)
+        XCTAssertEqual(id.agentType, "planner")
+    }
+
+    func testApplicationIdentity() {
+        let id = ApplicationIdentity(appBundleID: "com.test.app", appVersion: "1.0", signedBy: NodeID(), capabilities: [.screenView, .terminalOpen])
+        XCTAssertEqual(id.appBundleID, "com.test.app")
+        XCTAssertEqual(id.capabilities.count, 2)
+    }
+
+    func testJobIDRawRepresentable() {
+        let jid = JobID()
+        let same = JobID(rawValue: jid.rawValue)
+        XCTAssertEqual(jid, same)
+    }
+
+    func testJobIDCodable() throws {
+        let jid = JobID()
+        let data = try JSONEncoder().encode(jid)
+        let decoded = try JSONDecoder().decode(JobID.self, from: data)
+        XCTAssertEqual(jid, decoded)
+    }
 }
