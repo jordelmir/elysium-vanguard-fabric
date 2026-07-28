@@ -18,6 +18,8 @@ public struct PipelineMetrics: Sendable {
     public var activeJobs: Int = 0
     public var memoryUsageBytes: UInt64 = 0
 
+    public init() {}
+
     public var fps: Double {
         guard uptimeSeconds > 0 else { return 0 }
         return Double(framesRendered) / uptimeSeconds

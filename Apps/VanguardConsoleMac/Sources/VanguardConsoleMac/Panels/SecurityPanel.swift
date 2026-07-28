@@ -12,6 +12,7 @@ struct SecurityPanel: View {
         case capabilities = "Capabilities"
         case events = "Events"
         case audit = "Audit"
+        case chain = "Chain"
     }
 
     var body: some View {
@@ -62,6 +63,7 @@ struct SecurityPanel: View {
         case .capabilities: capabilitiesSection
         case .events: eventsSection
         case .audit: auditSection
+        case .chain: chainSection
         }
     }
 
@@ -125,6 +127,50 @@ struct SecurityPanel: View {
                 }
             }.padding(DS.Spacing.md)
         }
+    }
+
+    private var chainSection: some View {
+        ScrollView {
+            VStack(spacing: DS.Spacing.md) {
+                HStack(spacing: DS.Spacing.md) {
+                    ZStack {
+                        Circle().fill(state.auditChainValid ? DS.Colors.success.opacity(0.15) : DS.Colors.error.opacity(0.15)).frame(width: 48, height: 48)
+                        Image(systemName: state.auditChainValid ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(state.auditChainValid ? DS.Colors.success : DS.Colors.error)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(state.auditChainValid ? "Audit Chain VALID" : "Audit Chain BROKEN")
+                            .font(DS.Typography.headline)
+                            .foregroundColor(state.auditChainValid ? DS.Colors.success : DS.Colors.error)
+                        Text("Tamper detection: SHA-256 hash chain")
+                            .font(DS.Typography.caption)
+                            .foregroundColor(DS.Colors.textQuaternary)
+                    }
+                    Spacer()
+                }
+                .padding(DS.Spacing.md)
+                .glass(style: .ultraThin, cornerRadius: DS.Radius.md)
+
+                metricInfoRow(label: "Audit Entries", value: "\(state.auditEntries.count)")
+                metricInfoRow(label: "Chain Status", value: state.auditChainValid ? "Intact" : "Compromised", color: state.auditChainValid ? DS.Colors.success : DS.Colors.error)
+
+                ElysiumButton(title: "Verify Chain", icon: "arrow.triangle.2.circlepath", color: DS.Colors.accent, style: .bordered) {
+                    Task { await state.verifyAuditChain() }
+                }
+            }.padding(DS.Spacing.md)
+        }
+    }
+
+    private func metricInfoRow(label: String, value: String, color: Color = DS.Colors.textPrimary) -> some View {
+        HStack {
+            Text(label).font(DS.Typography.caption).foregroundColor(DS.Colors.textQuaternary)
+            Spacer()
+            Text(value).font(DS.Typography.mono).foregroundColor(color)
+        }
+        .padding(.horizontal, DS.Spacing.md)
+        .padding(.vertical, DS.Spacing.sm)
+        .glass(style: .ultraThin, cornerRadius: DS.Radius.sm)
     }
 
     private func emptySection(_ text: String) -> some View {

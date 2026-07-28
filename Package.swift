@@ -357,6 +357,11 @@ let package = Package(
             dependencies: ["VanguardPersistence", "VanguardTestSupport"],
             path: "Packages/VanguardPersistence/Tests"
         ),
+        .testTarget(
+            name: "VanguardFilesTests",
+            dependencies: ["VanguardFiles", "VanguardTestSupport"],
+            path: "Packages/VanguardFiles/Tests"
+        ),
 
         // MARK: - App Targets
 
@@ -411,6 +416,7 @@ let package = Package(
                 "VanguardObservability",
                 "VanguardAgents",
                 "VanguardPolicy",
+                "VanguardFiles",
                 "CSystemMetrics",
             ],
             path: "Apps/VanguardConsoleMac/Sources/VanguardConsoleMac",

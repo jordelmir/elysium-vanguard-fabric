@@ -25,6 +25,7 @@ import VanguardCompute
 import VanguardWorkspace
 import VanguardObservability
 import VanguardAgents
+import VanguardFiles
 
 @MainActor
 public final class ConsoleAppState: ObservableObject {
@@ -185,10 +186,18 @@ public final class ConsoleAppState: ObservableObject {
     private let maxReconnectionAttempts = 10
     private var lastConnectedNode: DiscoveredNode?
     private var clipboardSyncTask: Task<Void, Never>?
+    private let capabilityNegotiator = CapabilityNegotiator()
+    private let fileTransferService = FileTransferService()
+    private let metricsCollector = PipelineMetricsCollector()
+    private let idempotencyCache = IdempotencyCache()
+    private var metricsTimer: Timer?
     @Published public var trustedPeers: [TrustedPeer] = []
     @Published public var terminalScrollbackLimit: Int = 10000
     @Published public var isReconnecting = false
     @Published public var reconnectionAttempt = 0
+    @Published public var currentNegotiation: CapabilityNegotiation?
+    @Published public var auditChainValid: Bool = true
+    @Published public var pipelineMetrics: PipelineMetrics = PipelineMetrics()
 
     public struct TrustedPeer: Identifiable, Codable, Sendable {
         public let id: UUID
@@ -625,6 +634,18 @@ public final class ConsoleAppState: ObservableObject {
 
             await clipboardService.startWatching()
             startClipboardSync()
+            startMetricsCollection()
+
+            let consoleCaps = await capabilityNegotiator.defaultConsoleCapabilities()
+            let nodeCaps = await capabilityNegotiator.defaultNodeCapabilities()
+            let negotiation = await capabilityNegotiator.negotiate(
+                consoleOffered: consoleCaps,
+                nodeRequired: nodeCaps,
+                nodeOffered: nodeCaps
+            )
+            currentNegotiation = negotiation
+            grantedCapabilities = negotiation.agreedUpon
+            appendAudit("Capability negotiation: \(negotiation.agreedUpon.count) agreed, \(negotiation.rejectedByNode.count + negotiation.rejectedByConsole.count) rejected", severity: negotiation.isFullyAgreed ? .success : .warning)
 
             let metrics = Self.gatherLocalSystemMetrics()
             let descriptor = NodeResourceDescriptor(
@@ -661,6 +682,7 @@ public final class ConsoleAppState: ObservableObject {
         }
         stopClipboardSync()
         cancelReconnection()
+        stopMetricsCollection()
         await coordinator?.disconnect()
         await clipboardService.stopWatching()
         isConnected = false
@@ -711,6 +733,41 @@ public final class ConsoleAppState: ObservableObject {
             }
         }
     }
+
+    private func startMetricsCollection() {
+        metricsTimer?.invalidate()
+        metricsTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.metricsCollector.updateMemoryUsage()
+                self.pipelineMetrics = await self.metricsCollector.snapshot()
+            }
+        }
+    }
+
+    private func stopMetricsCollection() {
+        metricsTimer?.invalidate()
+        metricsTimer = nil
+    }
+
+    public func verifyAuditChain() async {
+        if let audit = auditService {
+            let isValid = (try? await audit.verifyIntegrity()) ?? true
+            auditChainValid = isValid
+            appendAudit("Audit chain integrity: \(isValid ? "VALID" : "BROKEN")", severity: isValid ? .success : .error)
+        } else {
+            auditChainValid = true
+        }
+    }
+
+    public func recordFrameCaptured() { Task { await metricsCollector.recordFrameCaptured() } }
+    public func recordFrameEncoded() { Task { await metricsCollector.recordFrameEncoded() } }
+    public func recordFrameDecoded() { Task { await metricsCollector.recordFrameDecoded() } }
+    public func recordFrameRendered() { Task { await metricsCollector.recordFrameRendered() } }
+    public func recordFrameDropped() { Task { await metricsCollector.recordFrameDropped() } }
+    public func recordBytesTransferred(_ bytes: Int) { Task { await metricsCollector.recordBytesTransferred(bytes) } }
+    public func recordEncodeTime(_ ms: Double) { Task { await metricsCollector.recordEncodeTime(ms) } }
+    public func recordDecodeTime(_ ms: Double) { Task { await metricsCollector.recordDecodeTime(ms) } }
 
     private func refreshNodeTelemetry() {
         let metrics = Self.gatherLocalSystemMetrics()
