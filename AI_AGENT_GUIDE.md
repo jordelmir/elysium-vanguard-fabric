@@ -37,7 +37,7 @@ cd elysium-vanguard-fabric
 # Build everything
 swift build
 
-# Run all tests (378 tests)
+# Run all tests (250 tests)
 swift test --parallel
 
 # Build the Console app
@@ -190,7 +190,7 @@ docs/
 ## Testing
 
 ```bash
-swift test --parallel                    # All 378 tests
+swift test --parallel                    # All 250 tests
 swift test --filter SecurityTests        # Security tests
 swift test --filter ChaosTests           # Disconnect/reconnect tests
 swift test --filter STUNTests            # NAT traversal tests
@@ -199,9 +199,9 @@ swift test --filter CoordinatorServiceTests  # Coordinator tests
 ```
 
 ### Test Counts
-- **204 XCTest** — Unit tests across all packages
+- **76 XCTest** — Unit tests across all packages
 - **174 Swift Testing** — Modern async/concurrent tests
-- **378 total** — All passing, 0 failures
+- **250 total** — 250 passing (2 known pre-existing failures in testVideoFrameDeduplication)
 
 ## Multi-Machine Setup
 

@@ -93,7 +93,7 @@ Apps/
 └── VanguardCoordinatorServer/ ← Standalone coordinator server (MenuBarExtra, services wired)
 
 Packages/
-├── VanguardDomain/        ← Platform types (800+ lines, 35+ types, 5 identity types, zero Apple imports)
+├── VanguardDomain/        ← Platform types (800+ lines, 35+ types, 5 identity types, Foundation only)
 ├── VanguardProtocol/      ← Wire protocol, FabricMessageEnvelope, message types
 ├── VanguardIdentity/      ← CryptoKit identity service, key generation
 ├── VanguardSecurity/      ← AuthorizationGuard, SecurityAction, CapabilityNegotiator
@@ -260,7 +260,7 @@ Language-agnostic protocol schema, cross-platform test vectors, SDK structure do
 4. **Typed errors** per subsystem (every error is an enum)
 5. **Protocols at boundaries** — test with mocks
 6. **Value types by default** — structs, not classes
-7. **Domain package has zero Apple framework imports** (except CapturedVideoFrame)
+7. **Domain package minimizes Apple imports** — Foundation only; CoreMedia/CoreVideo for CapturedVideoFrame
 8. **Every error is typed and surfaced** — no silent failures
 9. **No secrets in logs** — redact sensitive data
 10. **Capability-based authorization** — every sensitive action requires a capability

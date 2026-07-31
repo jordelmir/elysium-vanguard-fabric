@@ -113,12 +113,12 @@ open .build/arm64-apple-macosx/debug/VanguardNodeMac.app
 open .build/arm64-apple-macosx/debug/VanguardCoordinatorServer.app
 ```
 
-## Packages (37)
+## Packages (34)
 
 | Package | Purpose |
 |---------|---------|
-| VanguardDomain | Pure domain models, 5 identity types, zero Apple imports |
-| VanguardProtocol | Binary wire protocol with 10 logical channels |
+| VanguardDomain | Pure domain models, 5 identity types, Foundation only |
+| VanguardProtocol | Binary wire protocol with 9 logical channels |
 | VanguardTransport | NWConnection TLS transport with multiplexer |
 | VanguardDiscovery | Bonjour `_elysium-vanguard._tcp` discovery |
 | VanguardIdentity | Ed25519 + X25519 device identity |
@@ -149,7 +149,6 @@ open .build/arm64-apple-macosx/debug/VanguardCoordinatorServer.app
 | VanguardBuild | Universal binary builds (lipo combine) |
 | VanguardTestSupport | Mocks for testing |
 | CSystemMetrics | Real mach APIs for CPU/RAM/battery |
-| SystemMetrics | Swift wrapper for CSystemMetrics |
 | VanguardArtifacts | Artifact chunking and transfer |
 
 ## Console App — 11 Panels

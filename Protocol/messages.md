@@ -511,6 +511,24 @@ Workspace change set.
 | changes | [WorkspaceChange] | List of changes |
 | stateHash | bytes | New state hash (32 bytes) |
 
+### workspaceRequest (0x0A02)
+
+Console requests workspace snapshot from Node.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| workspaceID | uuid | Workspace identifier |
+
+### workspaceResponse (0x0A03)
+
+Node responds with workspace snapshot.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| workspaceID | uuid | Workspace identifier |
+| files | map[string]string] | File paths to content hashes |
+| stateHash | bytes | Current state hash (32 bytes) |
+
 ---
 
 ## Clipboard Messages
