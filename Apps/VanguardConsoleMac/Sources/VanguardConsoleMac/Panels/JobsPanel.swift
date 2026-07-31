@@ -9,6 +9,7 @@ struct JobsPanel: View {
     @State private var showNewJob = false
     @State private var newJobName = ""
     @State private var newJobExecutable = ""
+    @State private var newJobArguments = ""
     @State private var selectedJob: ConsoleAppState.TrackedJob?
 
     enum JobTab: String, CaseIterable {
@@ -116,12 +117,14 @@ struct JobsPanel: View {
                 .foregroundColor(DS.Colors.warning)
             TextField("Job name", text: $newJobName).textFieldStyle(.roundedBorder)
             TextField("Executable (e.g. /bin/echo)", text: $newJobExecutable).textFieldStyle(.roundedBorder)
+            TextField("Arguments (space separated)", text: $newJobArguments).textFieldStyle(.roundedBorder)
             HStack {
                 ElysiumButton(title: "Cancel", icon: "xmark", color: DS.Colors.textTertiary, style: .bordered) { showNewJob = false }
                 ElysiumButton(title: "Submit", icon: "hammer.fill", color: DS.Colors.warning) {
                     guard !newJobName.isEmpty, !newJobExecutable.isEmpty else { return }
-                    state.submitJob(name: newJobName, executable: newJobExecutable)
-                    newJobName = ""; newJobExecutable = ""; showNewJob = false
+                    let args = newJobArguments.isEmpty ? [] : newJobArguments.components(separatedBy: " ").filter { !$0.isEmpty }
+                    state.submitJob(name: newJobName, executable: newJobExecutable, arguments: args)
+                    newJobName = ""; newJobExecutable = ""; newJobArguments = ""; showNewJob = false
                 }
             }
         }

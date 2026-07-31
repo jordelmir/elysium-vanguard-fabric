@@ -286,17 +286,15 @@ struct DesktopTapModifier: ViewModifier {
                 Button("Right Click") {
                     let frame = renderer.currentFrameSize
                     guard frame.width > 0, frame.height > 0 else { return }
-                    let centerX = frame.width / 2
-                    let centerY = frame.height / 2
-                    let normalizedX = centerX / frame.width
-                    let normalizedY = 1.0 - (centerY / frame.height)
+                    let x = renderer.cursorX / frame.width
+                    let y = 1.0 - (renderer.cursorY / frame.height)
                     Task {
                         try? await consoleState.sendInputEvent(
-                            .mouseButton(button: .right, phase: .down, normalizedX: normalizedX, normalizedY: normalizedY)
+                            .mouseButton(button: .right, phase: .down, normalizedX: x, normalizedY: y)
                         )
                         try? await Task.sleep(nanoseconds: 50_000_000)
                         try? await consoleState.sendInputEvent(
-                            .mouseButton(button: .right, phase: .up, normalizedX: normalizedX, normalizedY: normalizedY)
+                            .mouseButton(button: .right, phase: .up, normalizedX: x, normalizedY: y)
                         )
                     }
                 }

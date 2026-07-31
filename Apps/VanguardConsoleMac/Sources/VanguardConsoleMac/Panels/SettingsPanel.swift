@@ -63,8 +63,8 @@ struct SettingsPanel: View {
 
     private var generalSection: some View {
         SettingsGroup(title: "GENERAL", icon: "gearshape") {
-            SettingsRow(label: "Version", value: "v0.1.0-alpha")
-            SettingsRow(label: "Build", value: "2026.01.25")
+            SettingsRow(label: "Version", value: "v0.2.0")
+            SettingsRow(label: "Build", value: "2026.07.31")
             SettingsRow(label: "Node", value: state.connectedNodeName ?? "Disconnected")
             VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
                 HStack {
@@ -130,7 +130,10 @@ struct SettingsPanel: View {
 
     private var displaySection: some View {
         SettingsGroup(title: "DISPLAY", icon: "display") {
-            ToggleRow(label: "Dark Mode", isOn: $darkMode)
+            ToggleRow(label: "Dark Mode", isOn: Binding(
+                get: { state.currentTheme == .minimal },
+                set: { state.setTheme($0 ? .minimal : .balanced) }
+            ))
             ToggleRow(label: "Hardware Accel", isOn: $hardwareAccel)
             ToggleRow(label: "Show FPS Overlay", isOn: $showFPS)
         }
