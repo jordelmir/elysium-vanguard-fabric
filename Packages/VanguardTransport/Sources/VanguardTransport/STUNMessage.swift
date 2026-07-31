@@ -191,7 +191,9 @@ public struct STUNMessage: Sendable, Equatable {
     public static func bindingRequest() -> STUNMessage {
         var txID = Data(count: 12)
         _ = txID.withUnsafeMutableBytes { ptr in
-            SecRandomCopyBytes(kSecRandomDefault, 12, ptr.baseAddress!)
+            if let base = ptr.baseAddress {
+                SecRandomCopyBytes(kSecRandomDefault, 12, base)
+            }
         }
         return STUNMessage(stunClass: .request, method: .binding, transactionID: txID)
     }

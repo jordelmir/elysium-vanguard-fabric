@@ -100,7 +100,8 @@ public actor NativeProcessExecutor: JobExecutor {
     }
 
     private func jobSandboxDirectory(for jobID: JobID) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return appSupport
             .appendingPathComponent("ElysiumVanguardFabric")
             .appendingPathComponent("Jobs")

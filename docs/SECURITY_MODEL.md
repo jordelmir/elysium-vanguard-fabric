@@ -42,3 +42,15 @@
 - All critical actions logged
 - Chain integrity verifiable
 - Exportable for analysis
+
+## Coordinator Security
+
+- Presence registration is authenticated via mTLS session
+- Coordinator does not store plaintext credentials
+- Rendezvous brokering uses ephemeral session keys
+- Relay channels are scoped to source/target node pairs
+- Relay data passes through without inspection
+- Signaling SDP exchange is encrypted within the TLS session
+- Node deregistration removes all associated state
+- Expired nodes and stale sessions are cleaned up automatically (30s interval)
+- Relay channels are released on inactivity (5 min timeout)

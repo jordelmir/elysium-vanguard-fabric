@@ -67,7 +67,9 @@ public actor LocalArtifactStore: ArtifactStore {
     }
 
     private static func defaultDirectory() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("ElysiumVanguardFabric")
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            return appSupport.appendingPathComponent("ElysiumVanguardFabric")
+        }
+        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ElysiumVanguardFabric")
     }
 }

@@ -8,9 +8,10 @@ public final class FilePersistenceService: PersistenceService, @unchecked Sendab
     public init(baseDirectory: URL? = nil) {
         if let baseDirectory {
             self.baseDirectory = baseDirectory
-        } else {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        } else if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             self.baseDirectory = appSupport.appendingPathComponent("ElysiumVanguard", isDirectory: true)
+        } else {
+            self.baseDirectory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ElysiumVanguard", isDirectory: true)
         }
         ensureDirectories()
     }

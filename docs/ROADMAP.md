@@ -119,7 +119,7 @@
 - [x] Clipboard sync with change detection
 - [x] Settings persistence via @AppStorage
 - [x] Both apps build and launch
-- [x] All 378 tests pass (204 XCTest + 174 Swift Testing)
+- [x] All 250 tests pass (76 XCTest + 174 Swift Testing)
 
 ---
 
@@ -127,10 +127,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Swift packages | 35 |
+| Swift packages | 37 |
 | Swift source files | 112+ |
 | Unit test files | 44+ |
-| Unit tests | 378 (204 XCTest + 174 Swift Testing) |
+| Unit tests | 250 (76 XCTest + 174 Swift Testing) |
 | Console panels | 11 |
 | Executable targets | 3 (ConsoleMac, NodeMac, CoordinatorServer) |
 | Build status | ✅ Passing |
@@ -239,7 +239,7 @@
 - [x] Public API reference for all packages (docs/API.md)
 - [x] Coordinator edge-case tests (15 tests)
 - [x] Build edge-case tests (8 tests)
-- [x] All 378 tests pass
+- [x] All 250 tests pass
 
 ### Phase 22: Coordinator Server & CI/CD
 - [x] Standalone VanguardCoordinatorServer app (MenuBarExtra, status display)
@@ -253,10 +253,10 @@
 - [x] 3 executable targets: VanguardConsoleMac, VanguardNodeMac, VanguardCoordinatorServer
 
 ### Phase 23: Network Integration
-- [ ] Emergency stop propagation to remote node
-- [ ] Bidirectional clipboard sync over network
-- [ ] Job dispatch over network with progress/completion events
-- [ ] Agent plan dispatch over network
-- [ ] Workspace request/response over network
-- [ ] Terminal output streaming over network
-- [ ] Node telemetry snapshots to Console
+- [x] Emergency stop propagation to remote node
+- [x] Bidirectional clipboard sync over network
+- [x] Job dispatch over network with progress/completion events
+- [x] Agent plan dispatch over network
+- [x] Workspace request/response over network
+- [x] Terminal output streaming over network
+- [x] Node telemetry snapshots to Console

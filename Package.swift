@@ -111,6 +111,11 @@ let package = Package(
             dependencies: ["VanguardDomain"],
             path: "Packages/VanguardClipboard/Sources/VanguardClipboard"
         ),
+        .testTarget(
+            name: "VanguardClipboardTests",
+            dependencies: ["VanguardClipboard", "VanguardTestSupport"],
+            path: "Packages/VanguardClipboard/Tests"
+        ),
         .target(
             name: "VanguardFiles",
             dependencies: ["VanguardDomain", "VanguardProtocol"],
@@ -260,6 +265,11 @@ let package = Package(
             name: "VanguardPolicy",
             dependencies: ["VanguardDomain"],
             path: "Packages/VanguardPolicy/Sources/VanguardPolicy"
+        ),
+        .testTarget(
+            name: "VanguardPolicyTests",
+            dependencies: ["VanguardPolicy", "VanguardTestSupport"],
+            path: "Packages/VanguardPolicy/Tests"
         ),
         .target(
             name: "VanguardObservability",

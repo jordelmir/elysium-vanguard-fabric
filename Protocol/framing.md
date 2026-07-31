@@ -1,6 +1,16 @@
 # Protocol Framing
 
-## Header Structure (25 bytes)
+## Two Framing Formats
+
+The protocol defines two framing formats:
+
+1. **ProtocolHeader (25 bytes)** — The canonical wire format used by `NetworkTransport`. This is what goes on the TCP/TLS socket. It does NOT include a session ID; session routing is handled at the transport layer.
+
+2. **FabricMessageEnvelope (48 bytes)** — A higher-level envelope used by cross-platform SDK test vectors and documentation. It includes a 16-byte session ID field for routing context. This format is NOT used on the wire by the native transport.
+
+**The canonical wire format is ProtocolHeader (25 bytes).** Cross-platform SDKs should implement ProtocolHeader for wire compatibility. FabricMessageEnvelope is provided for reference and test vector generation only.
+
+## Header Structure (25 bytes) — Canonical Wire Format
 
 ```
 Offset  Size  Field

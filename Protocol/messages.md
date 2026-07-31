@@ -579,6 +579,214 @@ No payload.
 
 ---
 
+## Presence Messages
+
+### presenceRegister (0x0B00)
+
+Node registers itself with the coordinator.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| nodeID | uuid | Node's unique identifier |
+| displayName | string | Human-readable name |
+| host | string | Node's IP or hostname |
+| port | u16 | Node's listening port |
+| architecture | u8 | CPU architecture (0=arm64, 1=x86_64) |
+| capabilities | bytes | 32-bit capability bitfield |
+
+### presenceDeregister (0x0B01)
+
+Node deregisters from the coordinator.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| nodeID | uuid | Node's unique identifier |
+
+### presenceHeartbeat (0x0B02)
+
+Node sends heartbeat to coordinator to keep presence alive.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| nodeID | uuid | Node's unique identifier |
+
+### presenceList (0x0B03)
+
+Console requests list of registered nodes from coordinator.
+
+No payload. Response contains node IDs.
+
+### presenceListResponse (0x0B04)
+
+Coordinator responds with list of registered node IDs.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| nodeIDs | uuid[] | Array of registered node identifiers |
+
+---
+
+## Rendezvous Messages
+
+### rendezvousRequest (0x0B10)
+
+Console requests rendezvous with a target node through the coordinator.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| consoleID | uuid | Console's node identifier |
+| targetNodeID | uuid | Target node's identifier |
+
+### rendezvousOffer (0x0B11)
+
+Coordinator forwards rendezvous offer to the target node.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| requestID | uuid | Rendezvous request identifier |
+| consoleID | uuid | Console's node identifier |
+| route | u8 | Proposed route (0=direct, 1=relay, 2=vpn) |
+
+### rendezvousAnswer (0x0B12)
+
+Node responds to rendezvous offer.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| requestID | uuid | Rendezvous request identifier |
+| accepted | bool | Whether node accepted the rendezvous |
+| selectedRoute | u8 | Chosen route |
+
+### rendezvousComplete (0x0B13)
+
+Finalizes rendezvous after both parties accept.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| requestID | uuid | Rendezvous request identifier |
+
+### rendezvousCancel (0x0B14)
+
+Cancels an in-progress rendezvous.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| requestID | uuid | Rendezvous request identifier |
+
+---
+
+## Signaling Messages
+
+### signalingOffer (0x0B20)
+
+Console sends SDP offer to target node via coordinator.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sessionID | uuid | Signaling session identifier |
+| fromNodeID | uuid | Sender's node identifier |
+| toNodeID | uuid | Recipient's node identifier |
+| sdp | bytes | SDP offer data |
+
+### signalingAnswer (0x0B21)
+
+Node sends SDP answer back to console.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sessionID | uuid | Signaling session identifier |
+| fromNodeID | uuid | Sender's node identifier |
+| toNodeID | uuid | Recipient's node identifier |
+| sdp | bytes | SDP answer data |
+
+### signalingIceCandidate (0x0B22)
+
+ICE candidate exchange during signaling.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sessionID | uuid | Signaling session identifier |
+| candidate | string | ICE candidate string |
+| sdpMLineIndex | i32 | SDP media line index |
+| sdpMid | string? | SDP media ID (optional) |
+
+### signalingError (0x0B23)
+
+Signaling error notification.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sessionID | uuid | Signaling session identifier |
+| errorCode | u16 | Error code |
+| reason | string | Human-readable error description |
+
+---
+
+## Relay Messages
+
+### relayAllocate (0x0B30)
+
+Request allocation of a relay channel between two nodes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sourceNodeID | uuid | Source node identifier |
+| targetNodeID | uuid | Target node identifier |
+
+### relayAllocateResponse (0x0B31)
+
+Coordinator responds with allocated channel.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channelID | uuid | Allocated channel identifier |
+| sourceNodeID | uuid | Source node identifier |
+| targetNodeID | uuid | Target node identifier |
+
+### relayForward (0x0B32)
+
+Forward a data packet through a relay channel.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channelID | uuid | Relay channel identifier |
+| fromNodeID | uuid | Sender's node identifier |
+| data | bytes | Payload data |
+
+### relayForwardAck (0x0B33)
+
+Acknowledgment of relay packet delivery.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channelID | uuid | Relay channel identifier |
+| delivered | bool | Whether packet was delivered |
+| latencyMs | f64 | Round-trip latency in milliseconds |
+
+### relayRelease (0x0B34)
+
+Release a relay channel.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channelID | uuid | Relay channel identifier |
+
+---
+
+## Error Messages
+
+### errorResponse (0x0FFF)
+
+Generic error response.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| errorCode | u16 | Error code (see errors.md) |
+| message | string | Human-readable error description |
+| relatedMessageID | uuid? | ID of the message that caused the error (optional) |
+
+---
+
 ## Channel Assignment Summary
 
 | Channel | Messages | Delivery | Max Payload |

@@ -149,11 +149,14 @@ public final class VideoToolboxDecoder: VideoDecoderService, @unchecked Sendable
 
                 return pointers.withUnsafeBufferPointer { ptrBuf -> OSStatus in
                     sizes.withUnsafeBufferPointer { sizeBuf -> OSStatus in
-                        CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                        guard let ptrBase = ptrBuf.baseAddress, let sizeBase = sizeBuf.baseAddress else {
+                            return -1
+                        }
+                        return CMVideoFormatDescriptionCreateFromH264ParameterSets(
                             allocator: kCFAllocatorDefault,
                             parameterSetCount: ptrBuf.count,
-                            parameterSetPointers: ptrBuf.baseAddress!,
-                            parameterSetSizes: sizeBuf.baseAddress!,
+                            parameterSetPointers: ptrBase,
+                            parameterSetSizes: sizeBase,
                             nalUnitHeaderLength: 4,
                             formatDescriptionOut: &formatDescription
                         )

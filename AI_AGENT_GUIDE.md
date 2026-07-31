@@ -103,7 +103,7 @@ Full message reference: `Protocol/messages.md`
 
 - **Identity**: Ed25519 key pairs, stored in macOS Keychain
 - **Transport**: TLS 1.3 mandatory, certificate pinning
-- **Authorization**: Capability-based (24 capabilities, no "full control")
+- **Authorization**: Capability-based (25 capabilities, no "full control")
 - **Audit**: SHA-256 hash chaining, tamper-evident logs
 
 Full security model: `docs/SECURITY.md`

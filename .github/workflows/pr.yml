@@ -53,5 +53,6 @@ jobs:
         run: |
           echo "Checking for stub implementations..."
           if grep -r "fatalError\|preconditionFailure\|TODO\|FIXME\|HACK" --include="*.swift" Packages/ | grep -v "Tests/" | grep -v "TestSupport" | grep -v "Mock" | grep -v "SKILL.md"; then
-            echo "WARNING: Found stubs or TODOs in production code"
+            echo "ERROR: Found stubs or TODOs in production code"
+            exit 1
           fi

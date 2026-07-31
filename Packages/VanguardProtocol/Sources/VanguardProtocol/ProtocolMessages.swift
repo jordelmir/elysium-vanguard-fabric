@@ -638,6 +638,14 @@ public struct PresenceDeregisterPayload: Codable, Sendable {
     }
 }
 
+public struct PresenceHeartbeatPayload: Codable, Sendable {
+    public let nodeID: NodeID
+
+    public init(nodeID: NodeID) {
+        self.nodeID = nodeID
+    }
+}
+
 public struct NodeListNodeIDs: Codable, Sendable {
     public let nodeIDs: [NodeID]
 
@@ -715,6 +723,18 @@ public struct SignalingICECandidatePayload: Codable, Sendable {
         self.candidate = candidate
         self.sdpMLineIndex = sdpMLineIndex
         self.sdpMid = sdpMid
+    }
+}
+
+public struct SignalingErrorPayload: Codable, Sendable {
+    public let sessionID: UUID
+    public let errorCode: UInt16
+    public let reason: String
+
+    public init(sessionID: UUID, errorCode: UInt16, reason: String) {
+        self.sessionID = sessionID
+        self.errorCode = errorCode
+        self.reason = reason
     }
 }
 

@@ -118,6 +118,10 @@ final class CoordinatorServerState: ObservableObject {
                 payload: Data()
             )
             try? await transport.send(response)
+        case .presenceHeartbeat:
+            if let payload = try? JSONDecoder().decode(PresenceHeartbeatPayload.self, from: message.payload) {
+                _ = await coordinator.heartbeat(payload.nodeID)
+            }
         case .presenceList:
             let nodes = await coordinator.nodeList()
             let nodeList = NodeListNodeIDs(nodeIDs: nodes.map { $0.nodeID })
@@ -185,6 +189,10 @@ final class CoordinatorServerState: ObservableObject {
                     sdpMid: payload.sdpMid
                 )
                 await signaling.addICECandidate(candidate, toSession: payload.sessionID)
+            }
+        case .signalingError:
+            if let payload = try? JSONDecoder().decode(SignalingErrorPayload.self, from: message.payload) {
+                await signaling.closeSession(payload.sessionID)
             }
         case .relayAllocate:
             if let payload = try? JSONDecoder().decode(RelayAllocatePayload.self, from: message.payload) {

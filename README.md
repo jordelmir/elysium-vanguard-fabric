@@ -183,7 +183,7 @@ ScreenCaptureKit → CVPixelBuffer → VideoToolbox Encoder → H.264 NAL
 ## Testing
 
 ```bash
-swift test                        # 378 tests (204 XCTest + 174 Swift Testing)
+swift test                        # 250 tests (76 XCTest + 174 Swift Testing)
 swift test --filter SecurityTests # Security tests
 swift test --filter ChaosTests    # Chaos/disconnect tests
 ```

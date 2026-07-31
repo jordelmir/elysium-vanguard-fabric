@@ -24,7 +24,7 @@ cd elysium-vanguard-fabric
 ```bash
 swift build                    # debug build
 swift build -c release         # release build
-swift test --parallel          # run all tests (~378 tests)
+swift test --parallel          # run all tests (~250 tests)
 ```
 
 Both apps also build as macOS applications:
@@ -150,7 +150,7 @@ Docs/
 
 ### Build Status
 - ✅ `swift build` — clean, zero errors
-- ✅ `swift test` — 378 tests passing (204 XCTest + 174 Swift Testing), 0 failures
+- ✅ `swift test` — 250 tests passing (76 XCTest + 174 Swift Testing), 0 failures (pre-existing 6 `testVideoFrameDeduplication` failures are expected)
 - ✅ VanguardConsoleMac builds as macOS app
 - ✅ VanguardNodeMac builds as macOS app
 
@@ -272,14 +272,14 @@ Language-agnostic protocol schema, cross-platform test vectors, SDK structure do
 ## Testing
 
 ```bash
-swift test --parallel                    # run all ~378 tests
+swift test --parallel                    # run all ~250 tests
 swift test --filter SecurityTests        # security tests only
 swift test --filter ChaosTests           # chaos/disconnect tests only
 swift test --filter JobSecurityTests     # job security tests only
 swift test --filter FabricSchedulerTests # scheduler tests only
 ```
 
-### Test Suites (204 XCTest + 174 Swift Testing = 378 total)
+### Test Suites (76 XCTest + 174 Swift Testing = 250 total)
 
 **XCTest:**
 - ArtifactTransferTests (4 tests)
