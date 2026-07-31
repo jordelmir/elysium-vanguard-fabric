@@ -255,6 +255,27 @@ public final class ConsoleAppState: ObservableObject {
                 activeJobs[idx] = updated
             }
 
+            if isConnected, let coordinator = coordinator {
+                let command = [executable] + arguments
+                do {
+                    try await coordinator.submitJobToNode(
+                        jobID: spec.jobID.uuidString,
+                        name: name,
+                        command: command
+                    )
+                    if let idx = activeJobs.firstIndex(where: { $0.id == tracked.id }) {
+                        activeJobs[idx].state = .assigned(nodeID: UUID())
+                    }
+                    appendAudit("Job dispatched to node: \(name)", severity: .info)
+                } catch {
+                    if let idx = activeJobs.firstIndex(where: { $0.id == tracked.id }) {
+                        activeJobs[idx].state = .failed(JobFailure(reason: error.localizedDescription))
+                    }
+                    appendAudit("Job dispatch failed: \(name) — \(error.localizedDescription)", severity: .error)
+                }
+                return
+            }
+
             try? await Task.sleep(nanoseconds: 200_000_000)
 
             if let idx = activeJobs.firstIndex(where: { $0.id == tracked.id }) {
@@ -306,6 +327,9 @@ public final class ConsoleAppState: ObservableObject {
 
     public func cancelJob(_ job: TrackedJob) {
         Task {
+            if isConnected, let coordinator = coordinator {
+                try? await coordinator.cancelJobOnNode(jobID: job.spec.jobID.uuidString)
+            }
             await nativeExecutor.cancel(jobID: JobID(rawValue: job.spec.jobID))
             if let idx = activeJobs.firstIndex(where: { $0.id == job.id }) {
                 activeJobs[idx].state = .cancelled
@@ -594,6 +618,7 @@ public final class ConsoleAppState: ObservableObject {
             startTelemetryRefresh()
 
             Task { await observeCoordinatorState() }
+            Task { await observeJobEvents() }
         } catch {
             statusMessage = "Failed to scan: \(error.localizedDescription)"
             appendAudit("Scan failed: \(error.localizedDescription)", severity: .error)
@@ -912,6 +937,45 @@ public final class ConsoleAppState: ObservableObject {
         }
     }
 
+    private func observeJobEvents() async {
+        guard let coordinator = coordinator else { return }
+        for await event in await coordinator.jobEventUpdates {
+            switch event {
+            case .assigned(let jobID, let nodeID):
+                if let idx = activeJobs.firstIndex(where: { $0.spec.jobID.uuidString == jobID }) {
+                    activeJobs[idx].state = .assigned(nodeID: UUID(uuidString: nodeID) ?? UUID())
+                    activeJobs[idx].nodeID = nodeID
+                }
+                appendAudit("Job \(jobID.prefix(8)) assigned to node \(nodeID.prefix(8))", severity: .info)
+            case .progress(let jobID, let stdout, let stderr):
+                if let idx = activeJobs.firstIndex(where: { $0.spec.jobID.uuidString == jobID }) {
+                    if let stdout { activeJobs[idx].output += stdout }
+                    if let stderr { activeJobs[idx].output += stderr }
+                    activeJobs[idx].state = .running(progress: 0)
+                }
+            case .completed(let jobID, let exitCode, let stdout, let stderr, let duration):
+                if let idx = activeJobs.firstIndex(where: { $0.spec.jobID.uuidString == jobID }) {
+                    if let stdout { activeJobs[idx].output += stdout }
+                    if let stderr { activeJobs[idx].output += stderr }
+                    activeJobs[idx].state = exitCode == 0 ? .succeeded : .failed(JobFailure(reason: "Exit code \(exitCode)", exitCode: exitCode))
+                }
+                appendAudit("Remote job completed: \(jobID.prefix(8)) (exit \(exitCode), \(String(format: "%.2f", duration))s)", severity: exitCode == 0 ? .success : .error)
+                await refreshFabricEvents()
+            case .failed(let jobID, let error):
+                if let idx = activeJobs.firstIndex(where: { $0.spec.jobID.uuidString == jobID }) {
+                    activeJobs[idx].state = .failed(JobFailure(reason: error))
+                }
+                appendAudit("Remote job failed: \(jobID.prefix(8)) — \(error)", severity: .error)
+                await refreshFabricEvents()
+            case .cancelled(let jobID):
+                if let idx = activeJobs.firstIndex(where: { $0.spec.jobID.uuidString == jobID }) {
+                    activeJobs[idx].state = .cancelled
+                }
+                appendAudit("Remote job cancelled: \(jobID.prefix(8))", severity: .warning)
+            }
+        }
+    }
+
     // MARK: - Reconnection
 
     private func startReconnection(to node: DiscoveredNode) {
@@ -1014,13 +1078,21 @@ public final class ConsoleAppState: ObservableObject {
         clipboardSyncTask = Task { [weak self] in
             guard let self else { return }
             var lastPasteboard = NSPasteboard.general.string(forType: .string) ?? ""
+            var lastChangeCount = NSPasteboard.general.changeCount
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                let current = NSPasteboard.general.string(forType: .string) ?? ""
-                if current != lastPasteboard && !current.isEmpty {
-                    lastPasteboard = current
-                    await self.eventLog.record(.clipboardChanged)
-                    self.appendAudit("Clipboard changed — \(current.count) chars", severity: .info)
+                let currentChangeCount = NSPasteboard.general.changeCount
+                if currentChangeCount != lastChangeCount {
+                    let current = NSPasteboard.general.string(forType: .string) ?? ""
+                    lastChangeCount = currentChangeCount
+                    if current != lastPasteboard && !current.isEmpty {
+                        lastPasteboard = current
+                        await self.eventLog.record(.clipboardChanged)
+                        self.appendAudit("Clipboard changed — \(current.count) chars", severity: .info)
+                        if self.isConnected, let coordinator = self.coordinator {
+                            try? await coordinator.sendClipboard(content: current, changeCount: currentChangeCount)
+                        }
+                    }
                 }
             }
         }

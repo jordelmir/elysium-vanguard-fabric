@@ -513,11 +513,25 @@ Workspace change set.
 
 ---
 
+## Clipboard Messages
+
+### clipboardData (0x0C00)
+
+Bidirectional clipboard synchronization.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| content | string | Clipboard text content |
+| contentType | string | MIME type (e.g. `public.utf8-plain-text`) |
+| changeCount | i32 | Pasteboard change count for dedup |
+
+---
+
 ## Channel Assignment Summary
 
 | Channel | Messages | Delivery | Max Payload |
 |---------|----------|----------|-------------|
-| 0 (control) | hello, helloAck, pairing*, sessionOpen/Close, capability*, flowControlAck, artifactManifest, artifactRequest, job*, resourceDescriptor, workspaceSync | reliable | 1 MiB |
+| 0 (control) | hello, helloAck, pairing*, sessionOpen/Close, capability*, flowControlAck, artifactManifest, artifactRequest, job*, resourceDescriptor, workspaceSync, clipboardData | reliable | 1 MiB |
 | 1 (inputReliable) | inputEvent | reliable | 256 B |
 | 2 (inputEphemeral) | inputEvent (mouse moves) | best-effort | 256 B |
 | 3 (video) | videoConfiguration, videoFrame, videoKeyframeRequest, videoAccessUnit | best-effort | 8 MiB |

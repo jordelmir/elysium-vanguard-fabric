@@ -212,6 +212,9 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case relayForward = 0x0B32
     case relayForwardAck = 0x0B33
     case relayRelease = 0x0B34
+
+    // Clipboard
+    case clipboardData = 0x0C00
 }
 
 // MARK: - Message Flags

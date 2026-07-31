@@ -2,6 +2,7 @@ import Foundation
 import os
 import CoreVideo
 import Network
+import AppKit
 import VanguardDomain
 import VanguardProtocol
 import VanguardTransport
@@ -42,6 +43,7 @@ public actor NodeSessionCoordinator {
         framesRendered: 0, averageEncodeTimeMs: 0, averageDecodeTimeMs: 0,
         averageRenderLatencyMs: 0, currentBitrate: 0
     )
+    private var activeJobs: [String: Task<Void, Never>] = [:]
 
     public struct NodeSession {
         public let sessionID: SessionID
@@ -288,6 +290,19 @@ public actor NodeSessionCoordinator {
         case .videoKeyframeRequest:
             AppLogger.info(.capture, "Console requested keyframe")
             await encoderService.requestKeyframe()
+        case .jobSubmit:
+            await handleJobSubmit(message)
+        case .jobCancelled:
+            await handleJobCancelled(message)
+        case .clipboardData:
+            if let payload = try? JSONDecoder().decode(ClipboardDataPayload.self, from: message.payload) {
+                await MainActor.run {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(payload.content, forType: .string)
+                }
+                AppLogger.info(.session, "Clipboard updated from console (\(payload.content.count) chars)")
+            }
         default:
             break
         }
@@ -347,6 +362,117 @@ public actor NodeSessionCoordinator {
         } else {
             updateState(.error("Wrong pairing code"))
         }
+    }
+
+    // MARK: - Job Execution
+
+    private func handleJobSubmit(_ message: InboundMessage) async {
+        guard let payload = try? JSONDecoder().decode(JobSubmitPayload.self, from: message.payload) else {
+            AppLogger.error(.node, "Failed to decode job submit payload")
+            return
+        }
+
+        AppLogger.info(.node, "Received job: \(payload.name) (id: \(payload.jobID))")
+
+        if let sessionID = currentSession?.sessionID,
+           await authorizationGuard?.checkCapability(.processExecute, sessionID: sessionID) == false {
+            AppLogger.warning(.node, "Job blocked — missing processExecute capability")
+            let failedPayload = JobFailedPayload(jobID: payload.jobID, error: "Missing processExecute capability")
+            if let data = try? JSONEncoder().encode(failedPayload) {
+                try? await transport.send(OutboundMessage(messageType: .jobFailed, payload: data))
+            }
+            return
+        }
+
+        let assignedPayload = JobAssignedPayload(jobID: payload.jobID, nodeID: Host.current().localizedName ?? "Node")
+        if let data = try? JSONEncoder().encode(assignedPayload) {
+            try? await transport.send(OutboundMessage(messageType: .jobAssigned, payload: data))
+        }
+
+        let outputAccumulator = JobOutputAccumulator()
+        let jobTransport = self.transport
+        let jobID = payload.jobID
+        let executable = payload.command.first ?? "/bin/zsh"
+        let arguments = payload.command.count > 1 ? Array(payload.command.dropFirst()) : ["-l"]
+
+        let task = Task { [weak self] in
+            let startTime = Date()
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                let text = String(data: data, encoding: .utf8) ?? ""
+                outputAccumulator.appendStdout(text)
+                let progressPayload = JobProgressPayload(jobID: jobID, stdout: text)
+                if let progressData = try? JSONEncoder().encode(progressPayload) {
+                    Task { try? await jobTransport.send(OutboundMessage(messageType: .jobProgress, payload: progressData)) }
+                }
+            }
+
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                let text = String(data: data, encoding: .utf8) ?? ""
+                outputAccumulator.appendStderr(text)
+                let progressPayload = JobProgressPayload(jobID: jobID, stderr: text)
+                if let progressData = try? JSONEncoder().encode(progressPayload) {
+                    Task { try? await jobTransport.send(OutboundMessage(messageType: .jobProgress, payload: progressData)) }
+                }
+            }
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+                let duration = Date().timeIntervalSince(startTime)
+                let exitCode = Int32(process.terminationStatus)
+                let completedPayload = JobCompletedPayload(
+                    jobID: jobID,
+                    exitCode: exitCode,
+                    stdout: outputAccumulator.stdout,
+                    stderr: outputAccumulator.stderr,
+                    duration: duration
+                )
+                if let data = try? JSONEncoder().encode(completedPayload) {
+                    try? await jobTransport.send(OutboundMessage(messageType: .jobCompleted, payload: data))
+                }
+                AppLogger.info(.node, "Job completed: \(payload.name) (exit \(exitCode))")
+            } catch {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+                let failedPayload = JobFailedPayload(jobID: jobID, error: error.localizedDescription)
+                if let data = try? JSONEncoder().encode(failedPayload) {
+                    try? await jobTransport.send(OutboundMessage(messageType: .jobFailed, payload: data))
+                }
+                AppLogger.error(.node, "Job failed: \(payload.name) — \(error.localizedDescription)")
+            }
+            await self?.removeActiveJob(id: jobID)
+        }
+        activeJobs[payload.jobID] = task
+    }
+
+    private func handleJobCancelled(_ message: InboundMessage) async {
+        guard let payload = try? JSONDecoder().decode(JobCancelledPayload.self, from: message.payload) else { return }
+        activeJobs[payload.jobID]?.cancel()
+        activeJobs.removeValue(forKey: payload.jobID)
+        AppLogger.info(.node, "Job cancelled: \(payload.jobID)")
+    }
+
+    private func removeActiveJob(id: String) {
+        activeJobs.removeValue(forKey: id)
     }
 
     // MARK: - Video Capture
@@ -609,6 +735,20 @@ public actor NodeSessionCoordinator {
     }
 }
 
+// MARK: - Job Output Accumulator
+
+private final class JobOutputAccumulator: Sendable {
+    private let lock = NSLock()
+    private nonisolated(unsafe) var _stdout = ""
+    private nonisolated(unsafe) var _stderr = ""
+
+    var stdout: String { lock.lock(); defer { lock.unlock() }; return _stdout }
+    var stderr: String { lock.lock(); defer { lock.unlock() }; return _stderr }
+
+    func appendStdout(_ text: String) { lock.lock(); _stdout += text; lock.unlock() }
+    func appendStderr(_ text: String) { lock.lock(); _stderr += text; lock.unlock() }
+}
+
 // MARK: - Console Session Coordinator
 
 public actor ConsoleSessionCoordinator {
@@ -627,12 +767,22 @@ public actor ConsoleSessionCoordinator {
     private var pendingChallengeCode: String?
     private var isDecoderConfigured = false
     private var messageTask: Task<Void, Never>?
+    private var jobEventContinuation: AsyncStream<JobEvent>.Continuation?
+    private var clipboardContinuation: AsyncStream<ClipboardDataPayload>.Continuation?
 
     public struct ConsoleSession {
         public let sessionID: SessionID
         public let nodeID: NodeID
         public let nodeEndpoint: NodeEndpoint
         public let connectedAt: Date
+    }
+
+    public enum JobEvent: Sendable {
+        case assigned(jobID: String, nodeID: String)
+        case progress(jobID: String, stdout: String?, stderr: String?)
+        case completed(jobID: String, exitCode: Int32, stdout: String?, stderr: String?, duration: TimeInterval)
+        case failed(jobID: String, error: String)
+        case cancelled(jobID: String)
     }
 
     public enum ConsoleState: Sendable, Equatable {
@@ -677,6 +827,18 @@ public actor ConsoleSessionCoordinator {
     public var terminalOutputUpdates: AsyncStream<TerminalOutputPayload> {
         AsyncStream { continuation in
             self.terminalContinuation = continuation
+        }
+    }
+
+    public var jobEventUpdates: AsyncStream<JobEvent> {
+        AsyncStream { continuation in
+            self.jobEventContinuation = continuation
+        }
+    }
+
+    public var clipboardUpdates: AsyncStream<ClipboardDataPayload> {
+        AsyncStream { continuation in
+            self.clipboardContinuation = continuation
         }
     }
 
@@ -814,6 +976,37 @@ public actor ConsoleSessionCoordinator {
         try await transport.send(message)
     }
 
+    // MARK: - Job Dispatch
+
+    public func submitJobToNode(jobID: String, name: String, command: [String], workingDirectory: String? = nil, timeoutSeconds: TimeInterval = 300) async throws {
+        let payload = JobSubmitPayload(
+            jobID: jobID,
+            name: name,
+            command: command,
+            workingDirectory: workingDirectory,
+            timeoutSeconds: timeoutSeconds
+        )
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .jobSubmit, payload: data)
+        try await transport.send(message)
+    }
+
+    public func cancelJobOnNode(jobID: String) async throws {
+        let payload = JobCancelledPayload(jobID: jobID)
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .jobCancelled, payload: data)
+        try await transport.send(message)
+    }
+
+    // MARK: - Clipboard
+
+    public func sendClipboard(content: String, changeCount: Int) async throws {
+        let payload = ClipboardDataPayload(content: content, changeCount: changeCount)
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .clipboardData, payload: data)
+        try await transport.send(message)
+    }
+
     // MARK: - Terminal
 
     public func openTerminal(configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
@@ -894,6 +1087,30 @@ public actor ConsoleSessionCoordinator {
                 terminalContinuation?.yield(payload)
             } catch {
                 os_log(.error, "Failed to decode terminal output: %{public}@", error.localizedDescription)
+            }
+        case .jobAssigned:
+            if let payload = try? JSONDecoder().decode(JobAssignedPayload.self, from: message.payload) {
+                jobEventContinuation?.yield(.assigned(jobID: payload.jobID, nodeID: payload.nodeID))
+            }
+        case .jobProgress:
+            if let payload = try? JSONDecoder().decode(JobProgressPayload.self, from: message.payload) {
+                jobEventContinuation?.yield(.progress(jobID: payload.jobID, stdout: payload.stdout, stderr: payload.stderr))
+            }
+        case .jobCompleted:
+            if let payload = try? JSONDecoder().decode(JobCompletedPayload.self, from: message.payload) {
+                jobEventContinuation?.yield(.completed(jobID: payload.jobID, exitCode: payload.exitCode, stdout: payload.stdout, stderr: payload.stderr, duration: payload.duration))
+            }
+        case .jobFailed:
+            if let payload = try? JSONDecoder().decode(JobFailedPayload.self, from: message.payload) {
+                jobEventContinuation?.yield(.failed(jobID: payload.jobID, error: payload.error))
+            }
+        case .jobCancelled:
+            if let payload = try? JSONDecoder().decode(JobCancelledPayload.self, from: message.payload) {
+                jobEventContinuation?.yield(.cancelled(jobID: payload.jobID))
+            }
+        case .clipboardData:
+            if let payload = try? JSONDecoder().decode(ClipboardDataPayload.self, from: message.payload) {
+                clipboardContinuation?.yield(payload)
             }
         case .heartbeatAck:
             break

@@ -507,3 +507,17 @@ public struct ArtifactRequestPayload: Codable, Sendable {
         self.chunkIndices = chunkIndices
     }
 }
+
+// MARK: - Clipboard Payload
+
+public struct ClipboardDataPayload: Codable, Sendable {
+    public let content: String
+    public let contentType: String
+    public let changeCount: Int
+
+    public init(content: String, contentType: String = "public.utf8-plain-text", changeCount: Int) {
+        self.content = content
+        self.contentType = contentType
+        self.changeCount = changeCount
+    }
+}
