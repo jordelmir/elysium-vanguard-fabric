@@ -269,3 +269,74 @@ public struct ResourceRequirements: Sendable, Codable {
         self.architecture = architecture
     }
 }
+
+// MARK: - Prepared Execution
+
+public struct PreparedExecution: Sendable, Codable {
+    public let jobID: JobID
+    public let resolvedExecutable: String
+    public let resolvedArguments: [String]
+    public let sandboxPath: String
+    public let inputsPath: String
+    public let outputsPath: String
+    public let logsPath: String
+    public let environment: [String: String]
+    public let processLimit: Int
+    public let timeoutSeconds: UInt64
+
+    public init(
+        jobID: JobID,
+        resolvedExecutable: String,
+        resolvedArguments: [String],
+        sandboxPath: String,
+        inputsPath: String,
+        outputsPath: String,
+        logsPath: String,
+        environment: [String: String],
+        processLimit: Int = 256,
+        timeoutSeconds: UInt64 = 3600
+    ) {
+        self.jobID = jobID
+        self.resolvedExecutable = resolvedExecutable
+        self.resolvedArguments = resolvedArguments
+        self.sandboxPath = sandboxPath
+        self.inputsPath = inputsPath
+        self.outputsPath = outputsPath
+        self.logsPath = logsPath
+        self.environment = environment
+        self.processLimit = processLimit
+        self.timeoutSeconds = timeoutSeconds
+    }
+}
+
+// MARK: - Job Execution Event
+
+public enum JobExecutionEvent: Sendable, Codable, Equatable {
+    case started(jobID: JobID, nodeID: UUID)
+    case stdoutChunk(jobID: JobID, data: Data)
+    case stderrChunk(jobID: JobID, data: Data)
+    case progress(jobID: JobID, percentage: Double)
+    case checkpoint(jobID: JobID, checkpointID: UUID, sequence: UInt64)
+    case resourceSample(jobID: JobID, cpuUsage: Double, memoryBytes: UInt64)
+    case outputReady(jobID: JobID, artifactID: UUID, path: String, sha256: Data)
+    case succeeded(jobID: JobID, exitCode: Int32, duration: TimeInterval)
+    case failed(jobID: JobID, reason: String, exitCode: Int32)
+    case cancelled(jobID: JobID)
+    case timedOut(jobID: JobID, timeoutSeconds: UInt64)
+
+    public var jobID: JobID {
+        switch self {
+        case .started(let id, _): return id
+        case .stdoutChunk(let id, _): return id
+        case .stderrChunk(let id, _): return id
+        case .progress(let id, _): return id
+        case .checkpoint(let id, _, _): return id
+        case .resourceSample(let id, _, _): return id
+        case .outputReady(let id, _, _, _): return id
+        case .succeeded(let id, _, _): return id
+        case .failed(let id, _, _): return id
+        case .cancelled(let id): return id
+        case .timedOut(let id, _): return id
+        }
+    }
+}

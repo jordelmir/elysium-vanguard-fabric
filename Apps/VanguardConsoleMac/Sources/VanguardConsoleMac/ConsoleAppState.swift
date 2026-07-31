@@ -37,6 +37,7 @@ public final class ConsoleAppState: ObservableObject {
     @Published public var connectedNodeName: String?
     @Published public var currentState: SessionState = .idle
     @Published public var currentTheme: ThemeProfile = .balanced
+    @Published public var permissions: PermissionStatus = .unknown
 
     @Published public var activeJobs: [TrackedJob] = []
     @Published public var terminalSessions: [TrackedTerminalSession] = []
@@ -46,6 +47,12 @@ public final class ConsoleAppState: ObservableObject {
     @Published public var workspaceSnapshots: [WorkspaceSnapshot] = []
     @Published public var grantedCapabilities: Set<NodeCapability> = [.screenView, .screenControl, .clipboardRead, .clipboardWrite, .terminalOpen, .processExecute, .fileRead, .nodeRestart]
     @Published public var schedulerWeights = SchedulerWeights()
+
+    @Published public var availableDisplays: [DisplayDescriptor] = []
+    @Published public var availableWindows: [RemoteWindowDescriptor] = []
+    @Published public var selectedDisplayID: UInt32?
+    @Published public var selectedWindowID: UInt32?
+    @Published public var captureMode: WindowCaptureMode = .display
 
     public struct FabricEventEntry: Identifiable, Sendable {
         public let id = UUID()
@@ -88,6 +95,12 @@ public final class ConsoleAppState: ObservableObject {
         case paired
         case capturing
         case error(String)
+    }
+
+    public enum PermissionStatus: Equatable {
+        case unknown
+        case granted
+        case denied
     }
 
     public struct DiscoveredNode: Identifiable, Hashable {
@@ -217,6 +230,7 @@ public final class ConsoleAppState: ObservableObject {
 
     public init() {
         loadTrustedPeers()
+        Task { await checkPermissions() }
         Task { await registerShortcuts() }
         Task { await startEmergencyStopHotkey() }
     }
@@ -525,7 +539,22 @@ public final class ConsoleAppState: ObservableObject {
     // MARK: - Permissions
 
     public func checkPermissions() async {
-        appendAudit("Permissions check requested", severity: .info)
+        let permissionService = MacOSPermissionService()
+        let screenState = await permissionService.checkPermission(kind: .screenRecording)
+        let accessibilityState = await permissionService.checkPermission(kind: .accessibility)
+
+        if screenState.isGranted && accessibilityState.isGranted {
+            permissions = .granted
+        } else {
+            permissions = .denied
+        }
+    }
+
+    public func requestPermissions() async {
+        let permissionService = MacOSPermissionService()
+        _ = await permissionService.requestPermission(kind: .screenRecording)
+        _ = await permissionService.requestPermission(kind: .accessibility)
+        await checkPermissions()
     }
 
     // MARK: - Scanning

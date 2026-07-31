@@ -2,6 +2,43 @@ import Foundation
 import os
 import VanguardDomain
 
+public enum FabricEventCategory: String, Sendable, CaseIterable, Codable {
+    case identity
+    case pairing
+    case transport
+    case session
+    case capture
+    case video
+    case audio
+    case input
+    case terminal
+    case clipboard
+    case files
+    case workspace
+    case artifact
+    case scheduler
+    case job
+    case agent
+    case security
+    case update
+    case performance
+    case error
+}
+
+public enum FabricSeverity: String, Sendable, Codable, Comparable {
+    case debug
+    case info
+    case notice
+    case warning
+    case error
+    case critical
+
+    public static func < (lhs: FabricSeverity, rhs: FabricSeverity) -> Bool {
+        let order: [FabricSeverity] = [.debug, .info, .notice, .warning, .error, .critical]
+        return order.firstIndex(of: lhs)! < order.firstIndex(of: rhs)!
+    }
+}
+
 public enum FabricEvent: Sendable {
     case nodeDiscovered(NodeID)
     case nodeConnected(NodeID)

@@ -2,140 +2,173 @@
 
 ## Assets
 
-- User's Mac computers
-- Screen content (potentially sensitive)
-- Keyboard input (potentially credentials)
-- File system access
-- Terminal sessions and command history
-- Pairing keys and trust relationships
-- Audit logs
+| Asset | Description | Sensitivity |
+|-------|-------------|-------------|
+| Screen content | Real-time video of remote display | High |
+| Input events | Mouse, keyboard, scroll from controller | High |
+| File system | Artifacts, workspace files, build outputs | High |
+| Terminal | Shell sessions, command output | High |
+| Cryptographic keys | Ed25519, P256, TLS certificates | Critical |
+| Node resources | CPU, memory, GPU, storage | Medium |
+| Session state | Connection metadata, capabilities | Medium |
+| Audit logs | Activity trail, hash chain | Low |
 
 ## Threat Actors
 
-1. **LAN attacker**: Same network segment, passive or active
-2. **MITM**: Intercepting or modifying traffic
-3. **Compromised peer**: Previously trusted device now malicious
-4. **Stolen device**: Physical theft of M1 or MacBook
-5. **Malicious update**: Tampered application binary
+| Actor | Capability | Motivation |
+|-------|-----------|------------|
+| Network attacker (MITM) | Intercept/modify LAN traffic | Eavesdrop, inject commands |
+| Rogue node | Impersonate a trusted node | Execute unauthorized actions |
+| Malicious console | Compromised controller app | Exfiltrate data from nodes |
+| Rogue coordinator | Compromised server | Redirect connections, track users |
+| Insider threat | Physical access to device | Data theft, sabotage |
 
-## Threats and Mitigations
+## Security Architecture
 
-### 1. LAN Sniffing
-- **Asset**: Screen content, input, files
-- **Attack**: Passive packet capture on LAN
-- **Precondition**: Attacker on same network segment
-- **Mitigation**: TLS encryption on all transport
-- **Residual**: Metadata leakage (IP addresses, timing)
-- **Verification**: Protocol inspection tests
+### 1. Identity & Authentication
 
-### 2. MITM Attack
-- **Asset**: Authentication credentials, pairing keys
-- **Attack**: Intercept and modify pairing/handshake
-- **Precondition**: ARP spoofing or DNS hijack on LAN
-- **Mitigation**: Certificate pinning, Ed25519 signatures
-- **Residual**: First pairing vulnerable if user tricked
-- **Verification**: MITM simulation tests
+```
+┌─────────────┐    Ed25519     ┌─────────────┐
+│   Console   │◄──────────────►│    Node     │
+│  (signer)   │  challenge     │  (verifier) │
+│             │  response      │             │
+└─────────────┘                └─────────────┘
+```
 
-### 3. Replay Attack
-- **Asset**: Commands, input events
-- **Attack**: Re-record and replay valid messages
-- **Precondition**: Capture of valid traffic
-- **Mitigation**: Sequence numbers, operation IDs, idempotency cache
-- **Residual**: None if sequence tracking is correct
-- **Verification**: Replay detection tests
+- **Key generation**: Ed25519 for signing, P256 for ECDH key agreement
+- **Pairing**: 6-digit challenge-response, device displays code for human verification
+- **Identity persistence**: Keys stored in macOS Keychain, never on disk
+- **Fingerprint pinning**: SHA-256 hash of peer's public key, verified on every connection
+- **No password auth**: All authentication is cryptographic
 
-### 4. Compromised Peer
-- **Asset**: All resources accessible via granted capabilities
-- **Attack**: Previously trusted device behaves maliciously
-- **Precondition**: Device compromise after pairing
-- **Mitigation**: Capability scoping, revocation, audit
-- **Residual**: Window between compromise and detection
-- **Verification**: Revocation tests, audit verification
+### 2. Transport Security
 
-### 5. Brute Force Pairing
-- **Asset**: Pairing code (6 digits)
-- **Attack**: Try all 1,000,000 combinations
-- **Precondition**: Access to pairing protocol
-- **Mitigation**: Rate limiting, challenge expiry (120s), max attempts
-- **Residual**: 3 attempts in 120s = very limited
-- **Verification**: Rate limiting tests
+```
+┌──────────┐   TLS 1.3    ┌──────────┐
+│ Console  │◄─────────────►│   Node   │
+│          │  certificate  │          │
+│          │    pinning    │          │
+└──────────┘               └──────────┘
+```
 
-### 6. Malicious Payload Deserialization
-- **Asset**: Node process memory
-- **Attack**: Craft invalid message payload
-- **Precondition**: Network access to node
-- **Mitigation**: Strict validation, size limits, typed decoders
-- **Residual**: Parser bugs in JSON/Codable
-- **Verification**: Fuzzing tests
+- **TLS 1.3 mandatory**: No plaintext fallback, no downgrade
+- **Certificate pinning**: Public key hash verified against known peers
+- **mTLS**: Both sides present certificates
+- **Session binding**: TLS session tied to device identity
 
-### 7. Payload Length Bomb
-- **Asset**: Node memory
-- **Attack**: Send message claiming huge payload
-- **Precondition**: Network access
-- **Mitigation**: Per-channel max payload limits, validate before allocation
-- **Residual**: None if limits enforced
-- **Verification**: Oversized payload rejection tests
+### 3. Capability-Based Authorization
 
-### 8. Frame Bomb
-- **Asset**: Network bandwidth, decoder resources
-- **Attack**: Flood with video frames
-- **Precondition**: Active session
-- **Mitigation**: Frame dropping, backpressure, rate limiting
-- **Residual**: Temporary degradation
-- **Verification**: Stress tests
+```
+Console requests: [screenView, inputControl]
+Node grants:      [screenView]  ← partial grant
+Action:           inputControl → DENIED
+```
 
-### 9. Terminal Injection
-- **Asset**: Terminal session, underlying system
-- **Attack**: Inject escape sequences or commands
-- **Precondition**: Active terminal session
-- **Mitigation**: Input validation, PTY isolation, process group
-- **Residual**: Shell-specific injection vectors
-- **Verification**: Terminal injection tests
+- **No monolithic "admin"**: Every action requires explicit capability
+- **CapabilityGrant tokens**: Signed, time-limited, nonce-bound
+- **Node is authority**: Node decides what to grant, console cannot escalate
+- **Granular permissions**: 25 capability types (screen, audio, clipboard, terminal, file, job, agent, etc.)
 
-### 10. Command Injection
-- **Asset**: Node system
-- **Attack**: Execute arbitrary commands via task descriptors
-- **Precondition**: Active session with processExecute capability
-- **Mitigation**: Typed task descriptors, no raw shell execution
-- **Residual**: Task descriptor parsing bugs
-- **Verification**: Task validation tests
+### 4. Data Protection
 
-### 11. Path Traversal
-- **Asset**: File system
-- **Attack**: Access files outside authorized directories
-- **Precondition**: Active session with fileRead/fileWrite
-- **Mitigation**: Path canonicalization, directory confinement
-- **Residual**: Symlink escape
-- **Verification**: Path traversal tests
+| Data | At Rest | In Transit | In Log |
+|------|---------|-----------|--------|
+| Private keys | Keychain (encrypted) | N/A | Never logged |
+| Session keys | Memory only | TLS encrypted | Never logged |
+| Video frames | Memory only | TLS encrypted | Never logged |
+| Input events | Memory only | TLS encrypted | Never logged |
+| File chunks | Disk (sandboxed) | TLS encrypted | SHA-256 only |
+| Audit events | Disk (hash chain) | N/A | Sanitized |
 
-### 12. Stuck Input
-- **Asset**: Remote system usability
-- **Attack**: Send keyDown without keyUp
-- **Precondition**: Active control session
-- **Mitigation**: releaseAll on disconnect, key state tracking, panic shortcut
-- **Residual**: Edge cases in modifier keys
-- **Verification**: Stuck key recovery tests
+### 5. Input Security
 
-### 13. Denial of Service
-- **Asset**: Availability
-- **Attack**: Exhaust resources or crash node
-- **Precondition**: Network access
-- **Mitigation**: Resource limits, timeouts, graceful degradation
-- **Residual**: Undiscovered resource leaks
-- **Verification**: 8-hour session tests, memory tests
+- **Accessibility permission required**: macOS prompts user
+- **Rate limiting**: Max events per second enforced
+- **Coordinate validation**: Normalized [0,1] range checked
+- **Key state tracking**: All keys released on disconnect
+- **Emergency stop**: ⌘⌥Esc disconnects everything immediately
+- **No clipboard auto-sync**: Requires explicit user action
 
-### 14. Log Secret Leakage
-- **Asset**: Credentials, keys
-- **Attack**: Read log files for secrets
-- **Precondition**: Access to log storage
-- **Mitigation**: Log sanitizer, private markers, audit
-- **Residual**: Undiscovered logging points
-- **Verification**: Secret scan in logs
+### 6. Job Execution Security
 
-### 15. Stolen Device
-- **Asset**: All data on device
-- **Attack**: Physical access to stolen Mac
-- **Precondition**: Device theft
-- **Mitigation**: FileVault, keychain protection, revocation from other device
-- **Residual**: If FileVault not enabled
-- **Verification**: Revocation workflow tests
+- **Sandboxed execution**: Jobs run in isolated directories
+- **Timeout enforcement**: Jobs killed after deadline
+- **Signature verification**: Job specs signed by submitter
+- **Capability gating**: Each job action requires capability
+- **Path traversal prevention**: All paths resolved and validated
+- **No shell injection**: Arguments passed as array, not concatenated
+
+### 7. Update Security
+
+- **P256 ECDSA signatures**: All updates cryptographically signed
+- **Trusted key store**: Only known signing keys accepted
+- **SHA-256 integrity**: Hash verified before installation
+- **Staged installation**: Install to temp, verify, then activate
+- **Automatic rollback**: Previous version restored on health check failure
+- **No unsigned updates**: Rejected at signature verification
+
+### 8. Coordinator Security
+
+- **Presence directory**: Only registered nodes visible
+- **Rendezvous brokering**: Coordinator sees endpoints but not content
+- **Signaling relay**: SDP/ICE exchanged, but media flows peer-to-peer
+- **Relay encryption**: End-to-end encrypted even through relay
+- **No single point of failure**: P2P preferred, coordinator optional
+
+## Attack Scenarios & Mitigations
+
+### Scenario 1: MITM on LAN
+
+**Attack**: Attacker intercepts TCP connection between console and node.
+
+**Mitigation**: TLS 1.3 with certificate pinning. Attacker cannot forge certificate for pinned public key. Connection fails immediately.
+
+### Scenario 2: Rogue Node Impersonation
+
+**Attack**: Attacker starts a service on `_elysium-vanguard._tcp` pretending to be a known node.
+
+**Mitigation**: Console verifies node's certificate fingerprint against trusted peers. Rogue node's fingerprint won't match. Pairing required for new nodes.
+
+### Scenario 3: Compromised Console
+
+**Attack**: Console app is compromised, tries to escalate privileges.
+
+**Mitigation**: Node is final authority. Console can only use capabilities explicitly granted. Node can revoke capabilities at any time.
+
+### Scenario 4: Key Extraction
+
+**Attack**: Attacker extracts private keys from device.
+
+**Mitigation**: Keys stored in Keychain (hardware-backed on Apple Silicon). Even if extracted, keys are per-device and can be revoked by re-pairing.
+
+### Scenario 5: Replay Attack
+
+**Attack**: Attacker captures and replays capability grant tokens.
+
+**Mitigation**: CapabilityGrant includes nonce and expiration. Replayed tokens rejected.
+
+### Scenario 6: Relay Eavesdropping
+
+**Attack**: Compromised relay server reads forwarded packets.
+
+**Mitigation**: End-to-end encryption. Relay sees only encrypted bytes. ADR-012 specifies relay never sees plaintext.
+
+## Security Properties
+
+| Property | Guarantee |
+|----------|-----------|
+| Confidentiality | All data encrypted in transit (TLS 1.3) and at rest (Keychain) |
+| Integrity | SHA-256 hash chain for audit, signature verification for updates/jobs |
+| Authentication | Ed25519 cryptographic identity, challenge-response pairing |
+| Authorization | Capability-based, 25 granular permissions, node is authority |
+| Availability | Emergency stop, automatic rollback, reconnection with backoff |
+| Non-repudiation | Audit log with hash chain, all actions attributed to device |
+| Forward secrecy | Ephemeral keys for TLS, session keys not persisted |
+
+## Known Limitations
+
+1. **Physical access**: Device with unlocked screen can use the app. No additional authentication beyond macOS login.
+2. **LAN only (v0.1)**: No encryption beyond LAN boundary. Coordinator/relay needed for WAN.
+3. **No key revocation protocol**: Revoked peers must re-pair manually.
+4. **Single-user model**: No multi-user permission delegation.
+5. **No hardware attestation**: Cannot verify device integrity beyond Keychain.

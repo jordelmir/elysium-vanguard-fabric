@@ -97,15 +97,17 @@ git clone git@github.com:jordelmir/elysium-vanguard-fabric.git
 cd elysium-vanguard-fabric
 
 # Build
-swift build --target VanguardConsoleMac   # Console (M1)
-swift build --target VanguardNodeMac      # Node (Intel)
+swift build --target VanguardConsoleMac       # Console (M1)
+swift build --target VanguardNodeMac          # Node (Intel)
+swift build --target VanguardCoordinatorServer # Coordinator Server
 
 # Run
 open .build/arm64-apple-macosx/debug/VanguardConsoleMac.app
 open .build/arm64-apple-macosx/debug/VanguardNodeMac.app
+open .build/arm64-apple-macosx/debug/VanguardCoordinatorServer.app
 ```
 
-## Packages (32)
+## Packages (35)
 
 | Package | Purpose |
 |---------|---------|
@@ -173,7 +175,7 @@ ScreenCaptureKit → CVPixelBuffer → VideoToolbox Encoder → H.264 NAL
 ## Testing
 
 ```bash
-swift test                        # 82 tests (54 XCTest + 28 Swift Testing)
+swift test                        # 378 tests (204 XCTest + 174 Swift Testing)
 swift test --filter SecurityTests # Security tests
 swift test --filter ChaosTests    # Chaos/disconnect tests
 ```

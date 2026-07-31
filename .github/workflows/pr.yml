@@ -43,6 +43,7 @@ jobs:
           bash build.sh
           test -f .build/VanguardNodeMac.app/Contents/MacOS/VanguardNodeMac
           test -f .build/VanguardConsoleMac.app/Contents/MacOS/VanguardConsoleMac
+          test -f .build/VanguardCoordinatorServer.app/Contents/MacOS/VanguardCoordinatorServer
           echo "Build artifacts verified"
 
       - name: Check Package Dependencies

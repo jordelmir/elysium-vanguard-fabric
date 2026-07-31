@@ -24,7 +24,7 @@ cd elysium-vanguard-fabric
 ```bash
 swift build                    # debug build
 swift build -c release         # release build
-swift test --parallel          # run all tests (~105 tests)
+swift test --parallel          # run all tests (~228 tests)
 ```
 
 Both apps also build as macOS applications:
@@ -90,7 +90,7 @@ open .build/arm64-apple-macosx/debug/VanguardNodeMac.app
 Apps/
 ├── VanguardConsoleMac/    ← M1 controller app (SwiftUI, MenuBarExtra)
 ├── VanguardNodeMac/       ← MacBook Pro 2016 node app (SwiftUI, MenuBarExtra)
-└── (VanguardCoordinatorServer/ — future, not yet created)
+└── VanguardCoordinatorServer/ ← Standalone coordinator server (MenuBarExtra, services wired)
 
 Packages/
 ├── VanguardDomain/        ← Platform types (800+ lines, 35+ types, 5 identity types, zero Apple imports)
@@ -107,10 +107,12 @@ Packages/
 ├── VanguardClipboard/     ← ClipboardService with loop protection (SHA-256)
 ├── VanguardTerminal/      ← POSIX terminal with exit status, PTY
 ├── VanguardArtifacts/     ← ArtifactManifest, chunking, transfer, local store
-├── VanguardWorkspace/     ← Workspace snapshots, change sets
+├── VanguardWorkspace/     ← Workspace snapshots, change sets, bidirectional sync
 ├── VanguardCompute/       ← JobSpec, NativeProcessExecutor, JobState (13 states)
 ├── VanguardScheduler/     ← FabricScheduler with 8-dimension scoring model
-├── VanguardExecutors/     ← RemoteJobExecutor protocol, checkpoints
+├── VanguardExecutors/     ← RemoteJobExecutor protocol, checkpoints, DistributedJobCoordinator
+├── VanguardCoordinator/   ← CoordinatorService (presence), RendezvousService, SignalingService, RelayService
+├── VanguardBuild/         ← BuildManifest, LipoService (lipo combine), UniversalBuildService
 ├── VanguardAgents/        ← AgentPipeline, AgentPlan, DAG validation
 ├── VanguardPolicy/        ← SecurityPolicyAction (maps capabilities)
 ├── VanguardObservability/ ← FabricEventLog actor, PipelineMetricsCollector
@@ -148,7 +150,7 @@ Docs/
 
 ### Build Status
 - ✅ `swift build` — clean, zero errors
-- ✅ `swift test` — 82 tests passing (54 XCTest + 28 Swift Testing), 0 failures
+- ✅ `swift test` — 378 tests passing (204 XCTest + 174 Swift Testing), 0 failures
 - ✅ VanguardConsoleMac builds as macOS app
 - ✅ VanguardNodeMac builds as macOS app
 
@@ -193,6 +195,10 @@ Docs/
 - ✅ Reconnection — Exponential backoff (0.5s → 30s, 10 attempts)
 - ✅ Clipboard Sync — NSPasteboard polling with change detection
 - ✅ Trusted Peers — UserDefaults persistence, load on init
+- ✅ Bidirectional Workspace Sync — FileVersion, SyncDelta, conflict resolution (newestWins/consoleWins/nodeWins/manual), delta computation
+- ✅ Window Capture — SCContentFilter per-window, RemoteWindowDescriptor, window list enumeration
+- ✅ Multi-Display — DisplayDescriptor, display switching, RemotePointerContext, WindowGeometryMapper
+- ✅ NAT Traversal — STUN client (RFC 5389 binding), NATType detection, ConnectionRouteNegotiator (direct/relay/vpn routing)n- ✅ Relay Transport — RelayConfiguration, RelaySession, connectViaRelay() in NetworkTransport
 
 ### Media Pipeline
 - ✅ ScreenCaptureKit capture (SCStream, SCContentFilter)
@@ -218,43 +224,31 @@ Docs/
 
 ---
 
-## What's Missing — Next Steps
+## Completed Priorities
 
-### Priority 1: Identity Types (5 types)
-The master order specifies dedicated identity types that don't exist yet:
-- `SessionIdentity` — per-session cryptographic identity
-- `JobIdentity` — per-job signed identity
-- `ArtifactIdentity` — per-artifact producer identity
-- `AgentIdentity` — per-agent signed identity
-- `ApplicationIdentity` — per-app signed identity
+### Priority 1: Identity Types ✅
+`SessionIdentity`, `JobIdentity`, `ArtifactIdentity`, `AgentIdentity`, `ApplicationIdentity` in `Platform.swift`.
 
-These should go in `Packages/VanguardDomain/Sources/VanguardDomain/Platform.swift`.
+### Priority 2: Coordinator Server App ✅
+`Apps/VanguardCoordinatorServer/` — Standalone coordinator server with MenuBarExtra UI, NetworkTransport listener, message routing (presence, heartbeat, rendezvous, signaling, relay), auto-cleanup.
 
-### Priority 2: Coordinator Server App
-`Apps/VanguardCoordinatorServer/` does not exist. This is the Oracle Free server component (Rendezvous, relay, job coordinator). Can be deferred since LAN-only mode works without it.
+### Priority 3: UI Panels ✅
+All 11 panels in Console app: NodesPanel, JobsPanel, ResourcesPanel, WorkspacePanel, TerminalPanel, AgentsPanel, SecurityPanel, SettingsPanel, ObservatoryPanel, TrustedPeersPanel, RemoteDesktopView.
 
-### Priority 3: UI Panels (Section 40)
-The Console app has a flat node sidebar but lacks the dedicated panels from the master order:
-- **Nodos panel** — node list with status indicators
-- **Jobs panel** — active/queued/completed jobs
-- **Resources panel** — CPU, RAM, storage per node
-- **Workspace panel** — shared project view
-- **Terminal panel** — terminal sessions
-- **Agents panel** — AI agent status
-- **Security panel** — capabilities, audit log
-- **Settings panel** — configuration
+### Priority 4: Remote Window Capture ✅
+SCContentFilter per-window, multi-display with DisplayDescriptor, coordinate mapping with WindowGeometryMapper, RemotePointerContext. 14 tests.
 
-### Priority 4: Remote Window Capture (Section 22)
-Currently captures full displays. Need:
-- Per-window capture (SCContentFilter with window list)
-- WindowGeometryMapper for coordinate mapping
-- RemoteApplicationDescriptor, RemoteWindowDescriptor
+### Priority 5: Shared Workspace Sync ✅
+WorkspaceSyncService with bidirectional sync, FileVersion tracking, SyncDelta computation, 4 conflict resolution strategies. 6 tests.
 
-### Priority 5: Shared Workspace Sync (Section 21)
-WorkspaceSnapshot exists but bidirectional sync with conflict resolution is not implemented. Currently one-directional (owner → workers).
+### Priority 6: Signed Update Packages ✅
+P256 ECDSA signature verification, trusted key management, staged install, atomic activation, rollback. 20 tests.
 
-### Priority 6: Distributed Builds (Section 18)
-The job execution pipeline exists but the actual multi-node build workflow (ARM + Intel → universal binary → lipo) needs physical testing and integration.
+### Priority 7: Global Access — NAT Traversal & Relay ✅
+STUN client (RFC 5389), NATType detection, ConnectionRouteNegotiator (direct/relay/vpn), relay transport. 15 tests.
+
+### Priority 8: Multi-OS Protocol SDK ✅
+Language-agnostic protocol schema, cross-platform test vectors, SDK structure docs, 11 compatibility tests.
 
 ---
 
@@ -278,14 +272,14 @@ The job execution pipeline exists but the actual multi-node build workflow (ARM 
 ## Testing
 
 ```bash
-swift test --parallel                    # run all ~105 tests
+swift test --parallel                    # run all ~378 tests
 swift test --filter SecurityTests        # security tests only
 swift test --filter ChaosTests           # chaos/disconnect tests only
 swift test --filter JobSecurityTests     # job security tests only
 swift test --filter FabricSchedulerTests # scheduler tests only
 ```
 
-### Test Suites (54 XCTest + 28 Swift Testing = 82 total)
+### Test Suites (204 XCTest + 174 Swift Testing = 378 total)
 
 **XCTest:**
 - ArtifactTransferTests (4 tests)
@@ -321,6 +315,25 @@ swift test --filter FabricSchedulerTests # scheduler tests only
 - HeartbeatControllerTests (7 tests)
 - ReconnectionManagerTests (4 tests)
 - KeyboardShortcutServiceTests (4 tests)
+- TLSCertificateManagerTests (5 tests)
+- WorkspaceSyncServiceTests (6 tests)
+- MultiDisplayTests (14 tests)
+- STUNTests (15 tests: STUNMessage, NATType, ConnectionRoute, RouteNegotiator)
+- CrossPlatformTests (11 tests: envelope, STUN RFC 5389, capability bitfield, big-endian, UUID, NAT types, route descriptions, message types, channels)
+- UpdateServiceTests (20 tests: check, signature verify, install, activate, health check, rollback, full flow)
+- DistributedJobCoordinatorTests (7 tests: submit dispatch, no nodes, no executor, cancel, executor management, lifecycle, locality scoring)
+- CoordinatorServiceTests (7 tests: register, deregister, heartbeat, list, capability filter, expiry, architecture filter)
+- RendezvousServiceTests (4 tests: request, unknown node, respond, cancel)
+- SignalingServiceTests (5 tests: create offer, receive answer, ICE candidates, close session, sessions between)
+- RelayServiceTests (6 tests: allocate, forward, release, channels for node, cleanup, bandwidth)
+- CoordinatorEdgeCases (5 tests: registerOverwrite, deregisterIdempotent, heartbeatUnknown, updateNATUnknown, cleanupEmpty)
+- RendezvousEdgeCases (3 tests: respondUnknown, completeUnknown, rejectCleanup)
+- SignalingEdgeCases (4 tests: answerUnknown, candidatesEmpty, sessionUnknown, cleanupEmpty)
+- RelayEdgeCases (4 tests: forwardUnknown, releaseIdempotent, channelsUnknown, channelUnknown)
+- BuildManifestTests (3 tests: init, succeeded architectures, is complete)
+- LipoServiceTests (3 tests: insufficient inputs, input not found, verify fat binary)
+- UniversalBuildServiceTests (6 tests: active builds, cancel, cleanup, build target, build request, artifact status)
+- BuildEdgeCases (8 tests: singleArchComplete, allFailed, manifestUnknown, cancelCompleted, buildTargetFlags, customTargets, artifactFull, terminalStates)
 
 ---
 
@@ -393,5 +406,5 @@ Pre-existing warnings from NWBrowser/NWListener continuation handling. Does not 
 ### Data Extension Conflicts
 `FabricMessageEnvelope.swift` previously conflicted with `ProtocolFraming.swift` Data extensions. Now uses `withUnsafeBytes` instead of custom Data extensions to avoid naming conflicts.
 
-### NodeAction Naming
+### NodeAction Naming (Resolved)
 Three `NodeAction` enums existed across VanguardDomain, VanguardPolicy, and VanguardSecurity. VanguardSecurity's was renamed to `SecurityAction` to avoid ambiguity. VanguardPolicy's was replaced with `SecurityPolicyAction`.

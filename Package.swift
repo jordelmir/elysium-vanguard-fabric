@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .executable(name: "VanguardNodeMac", targets: ["VanguardNodeMac"]),
         .executable(name: "VanguardConsoleMac", targets: ["VanguardConsoleMac"]),
+        .executable(name: "VanguardCoordinatorServer", targets: ["VanguardCoordinatorServer"]),
         .library(name: "VanguardDomain", targets: ["VanguardDomain"]),
         .library(name: "VanguardProtocol", targets: ["VanguardProtocol"]),
         .library(name: "VanguardTransport", targets: ["VanguardTransport"]),
@@ -112,7 +113,7 @@ let package = Package(
         ),
         .target(
             name: "VanguardFiles",
-            dependencies: ["VanguardDomain"],
+            dependencies: ["VanguardDomain", "VanguardProtocol"],
             path: "Packages/VanguardFiles/Sources/VanguardFiles"
         ),
         .target(
@@ -245,6 +246,11 @@ let package = Package(
             dependencies: ["VanguardDomain", "VanguardCompute"],
             path: "Packages/VanguardExecutors/Sources/VanguardExecutors"
         ),
+        .testTarget(
+            name: "VanguardExecutorsTests",
+            dependencies: ["VanguardExecutors", "VanguardScheduler", "VanguardTestSupport"],
+            path: "Packages/VanguardExecutors/Tests"
+        ),
         .target(
             name: "VanguardAgents",
             dependencies: ["VanguardDomain", "VanguardCompute"],
@@ -279,6 +285,26 @@ let package = Package(
             name: "VanguardUpdatesTests",
             dependencies: ["VanguardUpdates", "VanguardTestSupport"],
             path: "Packages/VanguardUpdates/Tests"
+        ),
+        .target(
+            name: "VanguardCoordinator",
+            dependencies: ["VanguardDomain"],
+            path: "Packages/VanguardCoordinator/Sources/VanguardCoordinator"
+        ),
+        .testTarget(
+            name: "VanguardCoordinatorTests",
+            dependencies: ["VanguardCoordinator", "VanguardTestSupport"],
+            path: "Packages/VanguardCoordinator/Tests"
+        ),
+        .target(
+            name: "VanguardBuild",
+            dependencies: ["VanguardDomain", "VanguardCompute"],
+            path: "Packages/VanguardBuild/Sources/VanguardBuild"
+        ),
+        .testTarget(
+            name: "VanguardBuildTests",
+            dependencies: ["VanguardBuild", "VanguardTestSupport"],
+            path: "Packages/VanguardBuild/Tests"
         ),
 
         // Tests
@@ -422,12 +448,26 @@ let package = Package(
                 "VanguardAgents",
                 "VanguardPolicy",
                 "VanguardFiles",
+                "VanguardUpdates",
                 "CSystemMetrics",
             ],
             path: "Apps/VanguardConsoleMac/Sources/VanguardConsoleMac",
             linkerSettings: [
                 .linkedFramework("Network"),
                 .linkedFramework("CryptoKit"),
+            ]
+        ),
+        .executableTarget(
+            name: "VanguardCoordinatorServer",
+            dependencies: [
+                "VanguardDomain",
+                "VanguardCoordinator",
+                "VanguardProtocol",
+                "VanguardTransport",
+            ],
+            path: "Apps/VanguardCoordinatorServer/Sources/VanguardCoordinatorServer",
+            linkerSettings: [
+                .linkedFramework("Network"),
             ]
         ),
     ]

@@ -33,6 +33,8 @@ public final class CGEventInputDispatchService: InputDispatchService, @unchecked
     private var repeatingModifiers: ModifierSet = []
     private var tokenBucket: TokenBucket
     private var capturedDisplayID: CGDirectDisplayID = 0
+    private var pointerContext: RemotePointerContext?
+    private var geometryMapper: WindowGeometryMapper?
     public var emergencyEscapeHandler: (() -> Void)?
 
     public init() {
@@ -41,6 +43,14 @@ public final class CGEventInputDispatchService: InputDispatchService, @unchecked
 
     public func setCapturedDisplayID(_ displayID: CGDirectDisplayID) {
         lock.withLock { capturedDisplayID = displayID }
+    }
+
+    public func setPointerContext(_ context: RemotePointerContext) {
+        lock.withLock { pointerContext = context }
+    }
+
+    public func setWindowGeometryMapper(_ mapper: WindowGeometryMapper) {
+        lock.withLock { geometryMapper = mapper }
     }
 
     deinit {
@@ -403,10 +413,23 @@ public final class CGEventInputDispatchService: InputDispatchService, @unchecked
     // MARK: - Coordinate Normalization
 
     private func normalizeCoordinates(x: Double, y: Double) -> CGPoint {
-        let displayID: CGDirectDisplayID = lock.withLock { capturedDisplayID }
+        let (ctxDisplayID, mapper) = lock.withLock { (capturedDisplayID, geometryMapper) }
+
+        if let mapper = mapper, let ctx = lock.withLock({ pointerContext }) {
+            let (mappedX, _) = mapper.mapNormalizedToRemote(x: x, y: y, targetDisplayID: ctx.displayID)
+            let remoteDisplay = mapper.remoteDisplays.first(where: { $0.id == ctx.displayID }) ?? mapper.remoteDisplays.first
+            let screenW = Double(remoteDisplay?.width ?? 1920)
+            let screenH = Double(remoteDisplay?.height ?? 1080)
+            let screenMinX = remoteDisplay?.originX ?? 0
+            let screenMinY = remoteDisplay?.originY ?? 0
+            let px = mappedX * screenW / screenW + screenMinX
+            let py = (1.0 - y) * screenH + screenMinY
+            return CGPoint(x: px, y: py)
+        }
+
         let bounds: CGRect
-        if displayID != 0 {
-            bounds = CGDisplayBounds(displayID)
+        if ctxDisplayID != 0 {
+            bounds = CGDisplayBounds(ctxDisplayID)
         } else if let mainScreen = NSScreen.main {
             bounds = mainScreen.visibleFrame
         } else {

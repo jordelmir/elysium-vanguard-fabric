@@ -22,6 +22,24 @@ public struct WorkspaceSnapshot: Sendable, Codable {
     }
 }
 
+public enum WorkspaceOperation: Sendable, Codable, Equatable {
+    case create(path: String, content: Data, sha256: Data)
+    case modify(path: String, oldSHA256: Data, newContent: Data, newSHA256: Data)
+    case delete(path: String, expectedSHA256: Data)
+    case rename(from: String, to: String)
+    case mkdir(path: String)
+
+    public var path: String {
+        switch self {
+        case .create(let path, _, _): return path
+        case .modify(let path, _, _, _): return path
+        case .delete(let path, _): return path
+        case .rename(let from, _): return from
+        case .mkdir(let path): return path
+        }
+    }
+}
+
 public struct WorkspaceChangeSet: Sendable, Codable {
     public let snapshotID: WorkspaceID
     public let added: [String]

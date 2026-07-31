@@ -472,6 +472,129 @@ public actor NodeSessionCoordinator {
         }
     }
 
+    public func switchToWindow(_ windowID: UInt32) async {
+        stopCapture()
+        let config = CaptureConfiguration(maxWidth: 1280, maxHeight: 720, fps: 30)
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let frameStream = try await self.captureService.startWindowCapture(windowID: windowID, configuration: config)
+                try await self.encoderService.configure(width: 1280, height: 720, fps: 30, bitrate: 5_000_000)
+                for try await capturedFrame in frameStream {
+                    guard !Task.isCancelled else { break }
+                    let output = try await self.encoderService.encode(capturedFrame)
+                    switch output {
+                    case .configuration(let encConfig):
+                        let configPayload = VideoCodecConfigurationPayload(
+                            codec: encConfig.codec, revision: encConfig.revision,
+                            width: encConfig.width, height: encConfig.height,
+                            nalLengthSize: encConfig.nalLengthSize, sps: encConfig.sps, pps: encConfig.pps
+                        )
+                        let data = try JSONEncoder().encode(configPayload)
+                        let msg = OutboundMessage(messageType: .videoConfiguration, payload: data)
+                        try await self.transport.send(msg)
+                    case .accessUnit(let au):
+                        let auPayload = VideoAccessUnitPayload(
+                            frameID: au.frameID, presentationTimestampNanos: au.presentationTimestampNanos,
+                            durationNanos: au.durationNanos, isKeyframe: au.isKeyframe,
+                            configurationRevision: au.configurationRevision, avccData: au.avccPayload
+                        )
+                        let data = try JSONEncoder().encode(auPayload)
+                        let msg = OutboundMessage(messageType: .videoFrame, payload: data)
+                        try await self.transport.send(msg)
+                    case .configurationAndAccessUnit(let encConfig, let au):
+                        let configPayload = VideoCodecConfigurationPayload(
+                            codec: encConfig.codec, revision: encConfig.revision,
+                            width: encConfig.width, height: encConfig.height,
+                            nalLengthSize: encConfig.nalLengthSize, sps: encConfig.sps, pps: encConfig.pps
+                        )
+                        let configData = try JSONEncoder().encode(configPayload)
+                        try await self.transport.send(OutboundMessage(messageType: .videoConfiguration, payload: configData))
+                        let auPayload = VideoAccessUnitPayload(
+                            frameID: au.frameID, presentationTimestampNanos: au.presentationTimestampNanos,
+                            durationNanos: au.durationNanos, isKeyframe: au.isKeyframe,
+                            configurationRevision: au.configurationRevision, avccData: au.avccPayload
+                        )
+                        let auData = try JSONEncoder().encode(auPayload)
+                        try await self.transport.send(OutboundMessage(messageType: .videoFrame, payload: auData))
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.error(.capture, "Window capture ended: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    public func switchToDisplay(_ displayID: UInt32) async {
+        stopCapture()
+        let config = CaptureConfiguration(maxWidth: 1280, maxHeight: 720, fps: 30)
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let frameStream = try await self.captureService.switchDisplay(displayID: displayID, configuration: config)
+                try await self.encoderService.configure(width: 1280, height: 720, fps: 30, bitrate: 5_000_000)
+                var displayIDSet = false
+                for try await capturedFrame in frameStream {
+                    guard !Task.isCancelled else { break }
+                    if !displayIDSet, capturedFrame.displayID != 0 {
+                        await self.inputService.setCapturedDisplayID(capturedFrame.displayID)
+                        displayIDSet = true
+                    }
+                    let output = try await self.encoderService.encode(capturedFrame)
+                    switch output {
+                    case .configuration(let encConfig):
+                        let configPayload = VideoCodecConfigurationPayload(
+                            codec: encConfig.codec, revision: encConfig.revision,
+                            width: encConfig.width, height: encConfig.height,
+                            nalLengthSize: encConfig.nalLengthSize, sps: encConfig.sps, pps: encConfig.pps
+                        )
+                        let data = try JSONEncoder().encode(configPayload)
+                        let msg = OutboundMessage(messageType: .videoConfiguration, payload: data)
+                        try await self.transport.send(msg)
+                    case .accessUnit(let au):
+                        let auPayload = VideoAccessUnitPayload(
+                            frameID: au.frameID, presentationTimestampNanos: au.presentationTimestampNanos,
+                            durationNanos: au.durationNanos, isKeyframe: au.isKeyframe,
+                            configurationRevision: au.configurationRevision, avccData: au.avccPayload
+                        )
+                        let data = try JSONEncoder().encode(auPayload)
+                        let msg = OutboundMessage(messageType: .videoFrame, payload: data)
+                        try await self.transport.send(msg)
+                    case .configurationAndAccessUnit(let encConfig, let au):
+                        let configPayload = VideoCodecConfigurationPayload(
+                            codec: encConfig.codec, revision: encConfig.revision,
+                            width: encConfig.width, height: encConfig.height,
+                            nalLengthSize: encConfig.nalLengthSize, sps: encConfig.sps, pps: encConfig.pps
+                        )
+                        let configData = try JSONEncoder().encode(configPayload)
+                        try await self.transport.send(OutboundMessage(messageType: .videoConfiguration, payload: configData))
+                        let auPayload = VideoAccessUnitPayload(
+                            frameID: au.frameID, presentationTimestampNanos: au.presentationTimestampNanos,
+                            durationNanos: au.durationNanos, isKeyframe: au.isKeyframe,
+                            configurationRevision: au.configurationRevision, avccData: au.avccPayload
+                        )
+                        let auData = try JSONEncoder().encode(auPayload)
+                        try await self.transport.send(OutboundMessage(messageType: .videoFrame, payload: auData))
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.error(.capture, "Display switch ended: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    public func getAvailableWindows() async throws -> [RemoteWindowDescriptor] {
+        try await captureService.availableWindows()
+    }
+
+    public func getAvailableDisplays() async throws -> [DisplayDescriptor] {
+        try await captureService.availableDisplays()
+    }
+
     private func updateState(_ newState: NodeState) {
         currentState = newState
         stateContinuation?.yield(newState)

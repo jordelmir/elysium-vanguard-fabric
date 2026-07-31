@@ -89,6 +89,9 @@
 - [x] FileTransfer tests
 - [x] KeyboardShortcutService tests
 - [x] PipelineMetricsCollector tests
+- [x] WorkspaceSyncService tests (delta computation, conflict resolution, state management)
+- [x] TLSCertificateManager tests (ephemeral keys, fingerprint validation)
+- [x] MultiDisplayTests (coordinate mapping, display descriptors, window geometry)
 
 ### Phase 10: Per-Context Identity Types
 - [x] SessionIdentity (per-session cryptographic identity)
@@ -116,7 +119,7 @@
 - [x] Clipboard sync with change detection
 - [x] Settings persistence via @AppStorage
 - [x] Both apps build and launch
-- [x] All 82 tests pass (54 XCTest + 28 Swift Testing)
+- [x] All 378 tests pass (204 XCTest + 174 Swift Testing)
 
 ---
 
@@ -124,11 +127,12 @@
 
 | Metric | Value |
 |--------|-------|
-| Swift packages | 32 |
-| Swift source files | 108+ |
-| Unit test files | 42+ |
-| Unit tests | 82 (54 XCTest + 28 Swift Testing) |
+| Swift packages | 35 |
+| Swift source files | 112+ |
+| Unit test files | 44+ |
+| Unit tests | 378 (204 XCTest + 174 Swift Testing) |
 | Console panels | 11 |
+| Executable targets | 3 (ConsoleMac, NodeMac, CoordinatorServer) |
 | Build status | ✅ Passing |
 | Test status | ✅ All pass (0 failures) |
 | App launch | ✅ Both apps build and run |
@@ -144,24 +148,106 @@
 
 ---
 
-## v0.2 — Secure Transport & Multi-Node
+## v0.2 — Secure Transport & Workspace Sync
 
-### Phase 13: TLS & Certificate Pinning
-- [ ] mTLS with certificate pinning
-- [ ] Ephemeral key exchange
-- [ ] Certificate rotation
+### Phase 13: TLS & Certificate Pinning ✅
+- [x] mTLS with certificate pinning
+- [x] Ephemeral key exchange (createEphemeralKeyPair, computeFingerprint)
+- [x] Peer fingerprint validation
+- [x] Keychain-based persistent key storage
+- [x] TLS verify blocks on proper QoS (not .main)
+- [x] Server validates all client certs in chain
 
-### Phase 14: Multi-Node Coordination
-- [ ] Coordinator server (Oracle Free)
-- [ ] Multi-node job distribution
-- [ ] Universal binary builds (ARM + Intel → lipo)
+### Phase 14: Bidirectional Workspace Sync ✅
+- [x] WorkspaceSyncService actor with state management
+- [x] FileVersion tracking (path, sha256, size, modifiedBy, version)
+- [x] SyncDelta computation (added, modified, deleted, conflicts)
+- [x] Conflict resolution (newestWins, consoleWins, nodeWins, manual)
+- [x] Delta merge and state persistence
+- [x] 6 tests passing
 
-### Phase 15: Workspace Sync
-- [ ] Bidirectional workspace sync
-- [ ] Conflict resolution
-- [ ] Delta transfers
+### Phase 15: Remote Applications & Multi-Display ✅
+- [x] Window capture via SCContentFilter(desktopIndependentWindow:)
+- [x] RemoteWindowDescriptor, WindowBounds, WindowStreamSession
+- [x] DisplayDescriptor with multi-display tracking
+- [x] RemotePointerContext for per-display input routing
+- [x] WindowGeometryMapper for coordinate space conversion
+- [x] WindowCaptureMode (display/window/application)
+- [x] ScreenCaptureService protocol: availableWindows(), availableDisplays(), startWindowCapture(), switchDisplay()
+- [x] NodeSessionCoordinator: switchToWindow(), switchToDisplay(), getAvailableWindows(), getAvailableDisplays()
+- [x] CGEventInputDispatchService: setPointerContext(), setWindowGeometryMapper()
+- [x] ConsoleAppState: availableDisplays, availableWindows, selectedDisplayID, selectedWindowID, captureMode
+- [x] 14 tests passing (MultiDisplayTests)
 
-### Phase 16: Distribution
-- [ ] Update service (already scaffolded)
-- [ ] Rollback mechanism
-- [ ] Signed update packages
+### Phase 15B: Global Access — NAT Traversal & Relay ✅
+- [x] NATType enum (directOpen, coneNAT, restrictedConeNAT, portRestrictedConeNAT, symmetricNAT, symmetricFirewall)
+- [x] STUNAddress, NATMapping, RelayConfiguration, ConnectionRoute, RelaySession, NetworkPath domain types
+- [x] STUNMessage parser (RFC 5389): binding request/response, attributes (mappedAddress, xorMappedAddress, username, software, errorCode, fingerprint)
+- [x] STUNClient actor: UDP NAT discovery via binding request
+- [x] ConnectionRouteNegotiator actor: direct/relay/vpn route selection, TCP reachability probing
+- [x] NetworkTransport.connectViaRelay(): relay connection support
+- [x] 15 tests passing (STUNTests: STUNMessage, NATType, ConnectionRoute, RouteNegotiator)
+
+### Phase 16: Multi-OS Protocol SDK ✅
+- [x] Language-agnostic protocol schema (Protocol/schema.md) — type system, envelope, all message payloads, capability bitfield, channel IDs, error codes
+- [x] Cross-platform test vectors (Protocol/test-vectors/cross-platform-vectors.md) — envelope, STUN, video config, input events, artifacts, resources, capability bitfield, route negotiation
+- [x] SDK structure docs (Protocol/sdk-structure.md) — per-platform requirements (macOS/Linux/Windows/Android), protocol compliance checklist, interoperability tests
+- [x] Cross-platform compatibility tests (CrossPlatformTests.swift) — envelope round-trip, STUN RFC 5389, capability bitfield, big-endian encoding, UUID format, NAT types, route descriptions, message type IDs, channel IDs
+- [x] Fixed STUN class encoding bug (class shifted 4 bits → 14 bits per RFC 5389)
+- [x] Added UInt64.bigEndianBytes extension
+- [x] 11 tests passing (CrossPlatformTests)
+
+### Phase 17: Signed Update Packages ✅
+- [x] P256 ECDSA signature verification (CryptoKit)
+- [x] Trusted signing key management (addTrustedKey/removeTrustedKey)
+- [x] Manifest signature field integration
+- [x] Staged installation with backup
+- [x] Atomic activation (move staging → active, backup previous)
+- [x] Health check (file existence + content validation)
+- [x] Automatic rollback on activation failure
+- [x] Manual rollback with backup restoration
+- [x] Error state transitions (.failed on all failure paths)
+- [x] 20 tests passing (UpdateServiceTests)
+
+### Phase 18: Multi-Node Coordination ✅
+- [x] DistributedJobCoordinator actor (submit, dispatch, monitor, collect, cancel)
+- [x] FabricScheduler locality scoring (artifact proximity influences node selection)
+- [x] RemoteJobExecutorClient (network-based job dispatch via VanguardTransport)
+- [x] Job lifecycle tracking (pending → scheduling → dispatched → running → succeeded/failed)
+- [x] Automatic rollback on dispatch failure
+- [x] 7 tests passing (DistributedJobCoordinatorTests: submit, no nodes, no executor, cancel, executor management, lifecycle, locality)
+
+### Phase 19: Coordinator Server ✅
+- [x] CoordinatorService actor (presence directory, node registry, heartbeat, cleanup)
+- [x] RendezvousService (connection brokering, request/accept/cancel lifecycle)
+- [x] SignalingService (SDP offer/answer, ICE candidate exchange, session management)
+- [x] RelayService (channel allocation, packet forwarding, bandwidth tracking, cleanup)
+- [x] 16 new message types added to protocol (presence, rendezvous, signaling, relay)
+- [x] 22 tests passing (CoordinatorServiceTests: 7, RendezvousServiceTests: 4, SignalingServiceTests: 5, RelayServiceTests: 6)
+  - [x] 15 coordinator edge-case tests (CoordinatorEdgeCases: 5, RendezvousEdgeCases: 3, SignalingEdgeCases: 4, RelayEdgeCases: 4)
+
+### Phase 20: Universal Binary Builds ✅
+- [x] BuildManifest type (track per-arch artifacts, status, SHA-256)
+- [x] LipoService actor (combine binaries via /usr/bin/lipo, extract architectures, verify fat binaries)
+- [x] UniversalBuildService actor (multi-arch build orchestration, xcodebuild per architecture, lipo combine)
+- [x] BuildTarget, UniversalBuildRequest types (configuration, signing, entitlements)
+- [x] 12 tests passing (BuildManifestTests: 3, LipoServiceTests: 3, UniversalBuildServiceTests: 6)
+  - [x] 8 build edge-case tests (BuildEdgeCases: 8)
+
+### Phase 21: Hardening & Documentation
+- [x] Threat model and security architecture (docs/SECURITY.md)
+- [x] Public API reference for all packages (docs/API.md)
+- [x] Coordinator edge-case tests (15 tests)
+- [x] Build edge-case tests (8 tests)
+- [x] All 378 tests pass
+
+### Phase 22: Coordinator Server & CI/CD
+- [x] Standalone VanguardCoordinatorServer app (MenuBarExtra, status display)
+- [x] CoordinatorServerState: CoordinatorService, RendezvousService, SignalingService, RelayService wired
+- [x] NetworkTransport listener for incoming connections
+- [x] Message routing: presence, heartbeat, rendezvous, signaling, relay
+- [x] Automatic cleanup (expired nodes, stale sessions, inactive channels)
+- [x] Info.plist and entitlements for code signing
+- [x] build.sh updated with coordinator server bundle creation and signing
+- [x] CI/CD workflows (pr.yml, nightly.yml) verify coordinator server artifact
+- [x] 3 executable targets: VanguardConsoleMac, VanguardNodeMac, VanguardCoordinatorServer

@@ -17,4 +17,6 @@ public protocol InputDispatchService: Sendable {
     func isAccessibilityAuthorized() async -> Bool
     func requestAccessibility() async -> Bool
     func setCapturedDisplayID(_ displayID: CGDirectDisplayID)
+    func setPointerContext(_ context: RemotePointerContext)
+    func setWindowGeometryMapper(_ mapper: WindowGeometryMapper)
 }

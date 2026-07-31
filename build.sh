@@ -6,9 +6,10 @@ BUILD_DIR="$PROJECT_DIR/.build"
 
 echo "🔨 Building Elysium Vanguard Fabric..."
 
-# Build both targets
+# Build all targets
 swift build --product VanguardNodeMac --configuration release 2>&1 | tail -5
 swift build --product VanguardConsoleMac --configuration release 2>&1 | tail -5
+swift build --product VanguardCoordinatorServer --configuration release 2>&1 | tail -5
 
 # Create app bundles
 create_app_bundle() {
@@ -57,6 +58,10 @@ create_app_bundle "VanguardConsoleMac" "VanguardConsoleMac" \
     "$PROJECT_DIR/Apps/VanguardConsoleMac/Info.plist" \
     "$PROJECT_DIR/Apps/VanguardConsoleMac/VanguardConsoleMac.entitlements"
 
+create_app_bundle "VanguardCoordinatorServer" "VanguardCoordinatorServer" \
+    "$PROJECT_DIR/Apps/VanguardCoordinatorServer/Info.plist" \
+    "$PROJECT_DIR/Apps/VanguardCoordinatorServer/VanguardCoordinatorServer.entitlements"
+
 sign_bundle() {
     local app_path="$1"
     local entitlements="$2"
@@ -73,11 +78,16 @@ sign_bundle "$BUILD_DIR/VanguardNodeMac.app" \
 sign_bundle "$BUILD_DIR/VanguardConsoleMac.app" \
     "$PROJECT_DIR/Apps/VanguardConsoleMac/VanguardConsoleMac.entitlements"
 
+sign_bundle "$BUILD_DIR/VanguardCoordinatorServer.app" \
+    "$PROJECT_DIR/Apps/VanguardCoordinatorServer/VanguardCoordinatorServer.entitlements"
+
 echo ""
 echo "🚀 Build complete! Apps created in:"
 echo "   $BUILD_DIR/VanguardNodeMac.app"
 echo "   $BUILD_DIR/VanguardConsoleMac.app"
+echo "   $BUILD_DIR/VanguardCoordinatorServer.app"
 echo ""
 echo "To launch:"
 echo "   open $BUILD_DIR/VanguardNodeMac.app"
 echo "   open $BUILD_DIR/VanguardConsoleMac.app"
+echo "   open $BUILD_DIR/VanguardCoordinatorServer.app"

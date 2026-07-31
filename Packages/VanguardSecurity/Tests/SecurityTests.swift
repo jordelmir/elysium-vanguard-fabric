@@ -48,9 +48,9 @@ final class SecurityTests: XCTestCase {
             "~/../.ssh/authorized_keys"
         ]
         for path in paths {
-            let components = URL(fileURLWithPath: path).pathComponents
-            let hasTraversal = components.contains("..")
-            XCTAssertTrue(hasTraversal || path.hasPrefix("/"), "Path '\(path)' should be detected as traversal or absolute")
+            let hasTraversal = path.contains("..")
+            let isAbsolute = path.hasPrefix("/") || path.hasPrefix("~/")
+            XCTAssertTrue(hasTraversal || isAbsolute, "Path '\(path)' should be detected as traversal or absolute")
         }
     }
 

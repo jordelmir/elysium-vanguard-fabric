@@ -27,11 +27,15 @@ struct RemoteDesktopView: View {
         }
         .task {
             await renderer.startReceiving(consoleState: consoleState)
+            renderer.startKeyboardMonitor()
             if let view = metalView {
                 renderer.setupMetalView(view)
             }
         }
-        .onDisappear { Task { await renderer.stop() } }
+        .onDisappear {
+            renderer.stopKeyboardMonitor()
+            Task { await renderer.stop() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             renderer.isConnected = true
         }
@@ -188,33 +192,55 @@ struct MetalRepresentableView: NSViewRepresentable {
 struct DesktopHoverModifier: ViewModifier {
     @ObservedObject var renderer: RemoteDesktopState
     func body(content: Content) -> some View {
-        if #available(macOS 14.0, *) {
-            content
-                .onContinuousHover { phase in
-                    switch phase {
-                    case .active(let location):
-                        renderer.cursorX = location.x
-                        renderer.cursorY = location.y
-                        renderer.showCrosshair = true
-                        Task {
-                            let frame = renderer.currentFrameSize
-                            guard frame.width > 0, frame.height > 0 else { return }
-                            let normalizedX = location.x / frame.width
-                            let normalizedY = 1.0 - (location.y / frame.height)
-                            try? await renderer.consoleState?.sendInputEvent(
-                                .mouseMove(normalizedX: normalizedX, normalizedY: normalizedY, sequence: UInt64(Date().timeIntervalSinceReferenceDate * 1000))
-                            )
-                        }
-                    case .ended:
-                        renderer.showCrosshair = false
-                    }
-                }
-        } else {
-            content
-                .onHover { inside in
-                    renderer.showCrosshair = inside
-                }
+        content
+            .onHover { inside in
+                renderer.showCrosshair = inside
+            }
+            .background(
+                MouseMoveView(renderer: renderer)
+                    .allowsHitTesting(false)
+            )
+    }
+}
+
+struct MouseMoveView: NSViewRepresentable {
+    @ObservedObject var renderer: RemoteDesktopState
+
+    func makeNSView(context: Context) -> MouseMoveNSView {
+        let view = MouseMoveNSView()
+        view.onMove = { [weak renderer] location in
+            guard let renderer = renderer else { return }
+            renderer.cursorX = location.x
+            renderer.cursorY = location.y
+            let frame = renderer.currentFrameSize
+            guard frame.width > 0, frame.height > 0 else { return }
+            let normalizedX = location.x / frame.width
+            let normalizedY = 1.0 - (location.y / frame.height)
+            Task {
+                try? await renderer.consoleState?.sendInputEvent(
+                    .mouseMove(
+                        normalizedX: normalizedX,
+                        normalizedY: normalizedY,
+                        sequence: UInt64(Date().timeIntervalSinceReferenceDate * 1000)
+                    )
+                )
+            }
         }
+        return view
+    }
+
+    func updateNSView(_ nsView: MouseMoveNSView, context: Context) {}
+}
+
+class MouseMoveNSView: NSView {
+    var onMove: ((CGPoint) -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseMoved(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        let flipped = NSPoint(x: location.x, y: bounds.height - location.y)
+        onMove?(flipped)
     }
 }
 
@@ -222,24 +248,59 @@ struct DesktopTapModifier: ViewModifier {
     @ObservedObject var renderer: RemoteDesktopState
     var consoleState: ConsoleAppState
     func body(content: Content) -> some View {
-        content.gesture(
-            DragGesture(minimumDistance: 0)
-                .onEnded { value in
-                    Task {
+        content
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
                         let frame = renderer.currentFrameSize
                         guard frame.width > 0, frame.height > 0 else { return }
                         let normalizedX = value.location.x / frame.width
                         let normalizedY = 1.0 - (value.location.y / frame.height)
+                        Task {
+                            try? await consoleState.sendInputEvent(
+                                .mouseMove(
+                                    normalizedX: normalizedX,
+                                    normalizedY: normalizedY,
+                                    sequence: UInt64(Date().timeIntervalSinceReferenceDate * 1000)
+                                )
+                            )
+                        }
+                    }
+                    .onEnded { value in
+                        let frame = renderer.currentFrameSize
+                        guard frame.width > 0, frame.height > 0 else { return }
+                        let normalizedX = value.location.x / frame.width
+                        let normalizedY = 1.0 - (value.location.y / frame.height)
+                        Task {
+                            try? await consoleState.sendInputEvent(
+                                .mouseButton(button: .left, phase: .down, normalizedX: normalizedX, normalizedY: normalizedY)
+                            )
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            try? await consoleState.sendInputEvent(
+                                .mouseButton(button: .left, phase: .up, normalizedX: normalizedX, normalizedY: normalizedY)
+                            )
+                        }
+                    }
+            )
+            .contextMenu {
+                Button("Right Click") {
+                    let frame = renderer.currentFrameSize
+                    guard frame.width > 0, frame.height > 0 else { return }
+                    let centerX = frame.width / 2
+                    let centerY = frame.height / 2
+                    let normalizedX = centerX / frame.width
+                    let normalizedY = 1.0 - (centerY / frame.height)
+                    Task {
                         try? await consoleState.sendInputEvent(
-                            .mouseButton(button: .left, phase: .down, normalizedX: normalizedX, normalizedY: normalizedY)
+                            .mouseButton(button: .right, phase: .down, normalizedX: normalizedX, normalizedY: normalizedY)
                         )
                         try? await Task.sleep(nanoseconds: 50_000_000)
                         try? await consoleState.sendInputEvent(
-                            .mouseButton(button: .left, phase: .up, normalizedX: normalizedX, normalizedY: normalizedY)
+                            .mouseButton(button: .right, phase: .up, normalizedX: normalizedX, normalizedY: normalizedY)
                         )
                     }
                 }
-        )
+            }
     }
 }
 
@@ -248,6 +309,41 @@ struct DesktopScrollModifier: ViewModifier {
     var consoleState: ConsoleAppState
     func body(content: Content) -> some View {
         content
+            .background(
+                ScrollCaptureView(consoleState: consoleState)
+                    .allowsHitTesting(false)
+            )
+    }
+}
+
+struct ScrollCaptureView: NSViewRepresentable {
+    var consoleState: ConsoleAppState
+
+    func makeNSView(context: Context) -> ScrollCaptureNSView {
+        let view = ScrollCaptureNSView()
+        view.onScroll = { [weak consoleState] deltaX, deltaY, precise in
+            Task {
+                try? await consoleState?.sendInputEvent(
+                    .scroll(deltaX: deltaX, deltaY: deltaY, phase: .changed, precise: precise)
+                )
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollCaptureNSView, context: Context) {}
+}
+
+class ScrollCaptureNSView: NSView {
+    var onScroll: ((Double, Double, Bool) -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func scrollWheel(with event: NSEvent) {
+        let deltaX = Double(event.scrollingDeltaX)
+        let deltaY = Double(event.scrollingDeltaY)
+        let precise = event.isDirectionInvertedFromDevice || (abs(deltaY) < 1.0 && abs(deltaX) < 1.0)
+        onScroll?(deltaX, deltaY, precise)
     }
 }
 
@@ -272,9 +368,10 @@ final class RemoteDesktopState: ObservableObject {
     private var receiveTask: Task<Void, any Error>?
     private var metalRenderer: VideoMetalRenderer?
     private var statsTask: Task<Void, Never>?
+    private var keyboardMonitor: Any?
 
     func setupMetalView(_ view: MTKView) {
-        let renderer = VideoMetalRenderer()
+        guard let renderer = try? VideoMetalRenderer.create() else { return }
         renderer.setMTKView(view)
         self.metalRenderer = renderer
         Task { try? await renderer.startRendering() }
@@ -314,6 +411,36 @@ final class RemoteDesktopState: ObservableObject {
         }
     }
 
+    func startKeyboardMonitor() {
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            let keyCode = event.keyCode
+            let eventType = event.type
+            let isRepeat = event.isARepeat
+            let modifierFlags = event.modifierFlags
+            Task { @MainActor [weak self] in
+                guard let self = self, self.isConnected else { return }
+                let phase: KeyPhase = eventType == .keyDown ? .down : .up
+                let modifiers = self.mapModifiers(modifierFlags)
+                try? await self.consoleState?.sendInputEvent(
+                    .key(
+                        keyCode: UInt16(keyCode),
+                        phase: phase,
+                        modifiers: modifiers,
+                        isRepeat: isRepeat
+                    )
+                )
+            }
+            return event
+        }
+    }
+
+    func stopKeyboardMonitor() {
+        if let monitor = keyboardMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyboardMonitor = nil
+        }
+    }
+
     func requestKeyframe() async {
         try? await consoleState?.sendInputEvent(.releaseAll)
     }
@@ -324,7 +451,19 @@ final class RemoteDesktopState: ObservableObject {
         statsTask?.cancel()
         statsTask = nil
         isConnected = false
+        stopKeyboardMonitor()
         await metalRenderer?.stopRendering()
+    }
+
+    private func mapModifiers(_ flags: NSEvent.ModifierFlags) -> ModifierSet {
+        var modifiers = ModifierSet()
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.capsLock) { modifiers.insert(.capsLock) }
+        if flags.contains(.function) { modifiers.insert(.function) }
+        return modifiers
     }
 
     private func createImage(from pixelBuffer: CVPixelBuffer) -> NSImage? {

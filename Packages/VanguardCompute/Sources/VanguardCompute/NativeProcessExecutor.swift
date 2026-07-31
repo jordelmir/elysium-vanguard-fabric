@@ -2,13 +2,6 @@ import Foundation
 import os
 import VanguardDomain
 
-private func exitStatus(_ status: Int32) -> Int32 {
-    if (status & 0x7f) == 0 {
-        return (status >> 8) & 0xff
-    }
-    return -1
-}
-
 public actor NativeProcessExecutor: JobExecutor {
     private var runningJobs: [JobID: RunningJob] = [:]
     private let logger = Logger(subsystem: "ElysiumVanguard", category: "Compute")

@@ -814,3 +814,233 @@ public struct ApplicationIdentity: Sendable, Codable, Hashable {
         self.registeredAt = registeredAt
     }
 }
+
+// MARK: - Multi-Display
+
+public struct DisplayDescriptor: Codable, Sendable, Equatable, Identifiable {
+    public let id: UInt32
+    public let name: String
+    public let width: Int
+    public let height: Int
+    public let originX: Double
+    public let originY: Double
+    public let backingScaleFactor: Double
+    public let isMain: Bool
+    public let isBuiltIn: Bool
+
+    public init(id: UInt32, name: String, width: Int, height: Int, originX: Double = 0, originY: Double = 0, backingScaleFactor: Double = 2.0, isMain: Bool = false, isBuiltIn: Bool = false) {
+        self.id = id
+        self.name = name
+        self.width = width
+        self.height = height
+        self.originX = originX
+        self.originY = originY
+        self.backingScaleFactor = backingScaleFactor
+        self.isMain = isMain
+        self.isBuiltIn = isBuiltIn
+    }
+
+    public var centerX: Double { originX + Double(width) / 2.0 }
+    public var centerY: Double { originY + Double(height) / 2.0 }
+}
+
+// MARK: - Remote Pointer Context
+
+public struct RemotePointerContext: Codable, Sendable, Equatable {
+    public let displayID: UInt32
+    public let streamID: UUID
+    public let normalizedX: Double
+    public let normalizedY: Double
+    public let sequence: UInt64
+
+    public init(displayID: UInt32, streamID: UUID = UUID(), normalizedX: Double, normalizedY: Double, sequence: UInt64 = 0) {
+        self.displayID = displayID
+        self.streamID = streamID
+        self.normalizedX = normalizedX
+        self.normalizedY = normalizedY
+        self.sequence = sequence
+    }
+}
+
+// MARK: - Window Geometry Mapper
+
+public struct WindowGeometryMapper: Sendable, Equatable {
+    public let localDisplay: DisplayDescriptor
+    public let remoteDisplays: [DisplayDescriptor]
+    public let remoteWindow: RemoteWindowDescriptor?
+
+    public init(localDisplay: DisplayDescriptor, remoteDisplays: [DisplayDescriptor] = [], remoteWindow: RemoteWindowDescriptor? = nil) {
+        self.localDisplay = localDisplay
+        self.remoteDisplays = remoteDisplays
+        self.remoteWindow = remoteWindow
+    }
+
+    public func mapNormalizedToRemote(x: Double, y: Double, targetDisplayID: UInt32) -> (x: Double, y: Double) {
+        _ = remoteDisplays.first(where: { $0.id == targetDisplayID }) ?? remoteDisplays.first
+        return (x, y)
+    }
+
+    public func mapRemoteToLocal(x: Double, y: Double, sourceDisplayID: UInt32) -> (x: Double, y: Double) {
+        _ = sourceDisplayID
+        return (x, y)
+    }
+
+    public func mapWindowToDisplay(wx: Double, wy: Double, ww: Double, wh: Double, displayID: UInt32) -> (normalizedX: Double, normalizedY: Double, width: Double, height: Double) {
+        guard let remote = remoteDisplays.first(where: { $0.id == displayID }) ?? remoteDisplays.first else {
+            return (wx, wy, ww, wh)
+        }
+        let normalizedX = wx / Double(remote.width)
+        let normalizedY = wy / Double(remote.height)
+        let normalizedW = ww / Double(remote.width)
+        let normalizedH = wh / Double(remote.height)
+        return (normalizedX, normalizedY, normalizedW, normalizedH)
+    }
+
+    public func mapAbsoluteToNormalized(absX: Double, absY: Double, displayID: UInt32) -> (normalizedX: Double, normalizedY: Double) {
+        guard let remote = remoteDisplays.first(where: { $0.id == displayID }) ?? remoteDisplays.first else {
+            return (absX, absY)
+        }
+        let normalizedX = absX / Double(remote.width)
+        let normalizedY = absY / Double(remote.height)
+        return (normalizedX, normalizedY)
+    }
+
+    public func mapNormalizedToAbsolute(nx: Double, ny: Double, displayID: UInt32) -> (absX: Double, absY: Double) {
+        guard let remote = remoteDisplays.first(where: { $0.id == displayID }) ?? remoteDisplays.first else {
+            return (nx, ny)
+        }
+        let absX = nx * Double(remote.width)
+        let absY = ny * Double(remote.height)
+        return (absX, absY)
+    }
+}
+
+// MARK: - Window Capture Mode
+
+public enum WindowCaptureMode: String, Codable, Sendable {
+    case display
+    case window
+    case application
+}
+
+// MARK: - NAT Traversal
+
+public enum NATType: String, Codable, Sendable, Equatable {
+    case unknown
+    case directOpen
+    case coneNAT
+    case restrictedConeNAT
+    case portRestrictedConeNAT
+    case symmetricNAT
+    case symmetricFirewall
+
+    public var allowsDirectConnection: Bool {
+        switch self {
+        case .directOpen, .coneNAT, .restrictedConeNAT, .symmetricFirewall: return true
+        case .portRestrictedConeNAT, .symmetricNAT, .unknown: return false
+        }
+    }
+
+    public var requiresRelay: Bool {
+        !allowsDirectConnection
+    }
+}
+
+public struct STUNAddress: Codable, Sendable, Equatable {
+    public let ip: String
+    public let port: UInt16
+
+    public init(ip: String, port: UInt16) {
+        self.ip = ip
+        self.port = port
+    }
+
+    public var hostPort: String { "\(ip):\(port)" }
+}
+
+public struct NATMapping: Codable, Sendable, Equatable {
+    public let externalAddress: STUNAddress
+    public let localAddress: STUNAddress
+    public let natType: NATType
+    public let mappedAt: Date
+
+    public init(externalAddress: STUNAddress, localAddress: STUNAddress, natType: NATType, mappedAt: Date = Date()) {
+        self.externalAddress = externalAddress
+        self.localAddress = localAddress
+        self.natType = natType
+        self.mappedAt = mappedAt
+    }
+}
+
+public struct RelayConfiguration: Codable, Sendable, Equatable {
+    public let relayHost: String
+    public let relayPort: UInt16
+    public let relayFingerprint: Data
+    public let maxBandwidthMbps: Double
+    public let requireEncryption: Bool
+
+    public init(relayHost: String, relayPort: UInt16, relayFingerprint: Data = Data(), maxBandwidthMbps: Double = 100.0, requireEncryption: Bool = true) {
+        self.relayHost = relayHost
+        self.relayPort = relayPort
+        self.relayFingerprint = relayFingerprint
+        self.maxBandwidthMbps = maxBandwidthMbps
+        self.requireEncryption = requireEncryption
+    }
+}
+
+public enum ConnectionRoute: Codable, Sendable, Equatable {
+    case direct(host: String, port: UInt16)
+    case relay(RelayConfiguration)
+    case vpn(host: String, port: UInt16)
+
+    public var description: String {
+        switch self {
+        case .direct(let host, let port): return "direct://\(host):\(port)"
+        case .relay(let config): return "relay://\(config.relayHost):\(config.relayPort)"
+        case .vpn(let host, let port): return "vpn://\(host):\(port)"
+        }
+    }
+}
+
+public struct RelaySession: Codable, Sendable, Equatable {
+    public let sessionID: UUID
+    public let relayHost: String
+    public let relayPort: UInt16
+    public let sourceNodeID: UUID
+    public let targetNodeID: UUID
+    public let establishedAt: Date
+    public let lastActivityAt: Date
+    public let bytesRelayed: UInt64
+    public let isActive: Bool
+
+    public init(sessionID: UUID = UUID(), relayHost: String, relayPort: UInt16, sourceNodeID: UUID, targetNodeID: UUID, establishedAt: Date = Date(), lastActivityAt: Date = Date(), bytesRelayed: UInt64 = 0, isActive: Bool = true) {
+        self.sessionID = sessionID
+        self.relayHost = relayHost
+        self.relayPort = relayPort
+        self.sourceNodeID = sourceNodeID
+        self.targetNodeID = targetNodeID
+        self.establishedAt = establishedAt
+        self.lastActivityAt = lastActivityAt
+        self.bytesRelayed = bytesRelayed
+        self.isActive = isActive
+    }
+}
+
+public struct NetworkPath: Codable, Sendable, Equatable {
+    public let route: ConnectionRoute
+    public let natMapping: NATMapping?
+    public let estimatedLatencyMs: Double
+    public let estimatedBandwidthMbps: Double
+    public let isEncrypted: Bool
+    public let lastProbedAt: Date?
+
+    public init(route: ConnectionRoute, natMapping: NATMapping? = nil, estimatedLatencyMs: Double = 0, estimatedBandwidthMbps: Double = 100.0, isEncrypted: Bool = true, lastProbedAt: Date? = nil) {
+        self.route = route
+        self.natMapping = natMapping
+        self.estimatedLatencyMs = estimatedLatencyMs
+        self.estimatedBandwidthMbps = estimatedBandwidthMbps
+        self.isEncrypted = isEncrypted
+        self.lastProbedAt = lastProbedAt
+    }
+}
+

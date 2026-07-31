@@ -11,11 +11,35 @@ public final class TLSCertificateManager: @unchecked Sendable {
 
     public init() {}
 
+    // MARK: - Public API
+
     public func getOrCreateSigningKey() throws -> SecKey {
         if let existing = loadKeyFromKeychain() {
             return existing
         }
-        return try generateKeyPair()
+        let key = try generateKeyPair()
+        storeKeyToKeychain(key)
+        return key
+    }
+
+    public func createEphemeralKeyPair() throws -> (privateKey: SecKey, publicKeyData: Data, fingerprint: Data) {
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecPrivateKeyAttrs as String: [
+                kSecAttrIsPermanent as String: false
+            ]
+        ]
+        var error: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
+            throw TLSError.keyGenerationFailed(error?.takeRetainedValue().localizedDescription ?? "Unknown")
+        }
+        guard let publicKey = SecKeyCopyPublicKey(privateKey),
+              let pubData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+            throw TLSError.keyExportFailed("Failed to export ephemeral public key")
+        }
+        let fingerprint = Data(CryptoKit.SHA256.hash(data: pubData))
+        return (privateKey, pubData, fingerprint)
     }
 
     public func getLocalFingerprint() throws -> Data {
@@ -24,13 +48,27 @@ public final class TLSCertificateManager: @unchecked Sendable {
         guard let keyData = SecKeyCopyExternalRepresentation(key, &error) else {
             throw TLSError.keyExportFailed(error?.takeRetainedValue().localizedDescription ?? "Unknown")
         }
-        return Data(SHA256.hash(data: keyData as Data))
+        return Data(CryptoKit.SHA256.hash(data: keyData as Data))
+    }
+
+    public func getPublicKeyData(for key: SecKey) throws -> Data {
+        var error: Unmanaged<CFError>?
+        guard let data = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
+            throw TLSError.keyExportFailed(error?.takeRetainedValue().localizedDescription ?? "Unknown")
+        }
+        return data
     }
 
     public func validatePeerFingerprint(_ peerKeyData: Data, expectedFingerprint: Data) -> Bool {
-        let fingerprint = Data(SHA256.hash(data: peerKeyData))
+        let fingerprint = Data(CryptoKit.SHA256.hash(data: peerKeyData))
         return fingerprint == expectedFingerprint
     }
+
+    public func computeFingerprint(for publicKeyData: Data) -> Data {
+        Data(CryptoKit.SHA256.hash(data: publicKeyData))
+    }
+
+    // MARK: - Key Generation
 
     private func generateKeyPair() throws -> SecKey {
         let attributes: [String: Any] = [
@@ -46,10 +84,10 @@ public final class TLSCertificateManager: @unchecked Sendable {
         guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
             throw TLSError.keyGenerationFailed(error?.takeRetainedValue().localizedDescription ?? "Unknown")
         }
-
-        storeKeyToKeychain(privateKey)
         return privateKey
     }
+
+    // MARK: - Keychain Storage
 
     private func storeKeyToKeychain(_ key: SecKey) {
         var error: Unmanaged<CFError>?

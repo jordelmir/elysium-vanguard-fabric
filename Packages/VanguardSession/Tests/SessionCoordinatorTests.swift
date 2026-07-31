@@ -182,8 +182,18 @@ private final class MockPermissionService: PermissionService, @unchecked Sendabl
 
 private final class MockCaptureService: ScreenCaptureService, @unchecked Sendable {
     var stateUpdates: AsyncStream<CaptureState> { AsyncStream { $0.yield(.idle) } }
+    var currentDisplayID: UInt32 { 0 }
+    var currentCaptureMode: WindowCaptureMode { .display }
     func availableSources() async throws -> [CaptureSource] { [] }
+    func availableWindows() async throws -> [RemoteWindowDescriptor] { [] }
+    func availableDisplays() async throws -> [DisplayDescriptor] { [] }
     func startCapture(source: CaptureSource, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<CapturedVideoFrame, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+    func startWindowCapture(windowID: UInt32, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<CapturedVideoFrame, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+    func switchDisplay(displayID: UInt32, configuration: CaptureConfiguration) async throws -> AsyncThrowingStream<CapturedVideoFrame, Error> {
         AsyncThrowingStream { $0.finish() }
     }
     func stopCapture() async {}
@@ -212,6 +222,8 @@ private final class MockInputService: InputDispatchService, @unchecked Sendable 
     func isAccessibilityAuthorized() async -> Bool { true }
     func requestAccessibility() async -> Bool { true }
     func setCapturedDisplayID(_ displayID: CGDirectDisplayID) {}
+    func setPointerContext(_ context: RemotePointerContext) {}
+    func setWindowGeometryMapper(_ mapper: WindowGeometryMapper) {}
 }
 
 private final class MockTerminalService: TerminalService, @unchecked Sendable {

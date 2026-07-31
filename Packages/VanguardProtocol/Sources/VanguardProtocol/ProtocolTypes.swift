@@ -185,6 +185,33 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case resourceDescriptor = 0x0900
     case workspaceSync = 0x0A00
     case workspaceChangeSet = 0x0A01
+
+    // Coordinator — Presence
+    case presenceRegister = 0x0B00
+    case presenceDeregister = 0x0B01
+    case presenceHeartbeat = 0x0B02
+    case presenceList = 0x0B03
+    case presenceListResponse = 0x0B04
+
+    // Coordinator — Rendezvous
+    case rendezvousRequest = 0x0B10
+    case rendezvousOffer = 0x0B11
+    case rendezvousAnswer = 0x0B12
+    case rendezvousComplete = 0x0B13
+    case rendezvousCancel = 0x0B14
+
+    // Coordinator — Signaling
+    case signalingOffer = 0x0B20
+    case signalingAnswer = 0x0B21
+    case signalingIceCandidate = 0x0B22
+    case signalingError = 0x0B23
+
+    // Coordinator — Relay
+    case relayAllocate = 0x0B30
+    case relayAllocateResponse = 0x0B31
+    case relayForward = 0x0B32
+    case relayForwardAck = 0x0B33
+    case relayRelease = 0x0B34
 }
 
 // MARK: - Message Flags

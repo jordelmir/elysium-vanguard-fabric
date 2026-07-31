@@ -230,6 +230,10 @@ public actor FabricScheduler {
     }
 
     public func selectNode(for constraints: HardConstraints) throws -> SchedulerScore {
+        return try selectNode(for: constraints, requiredArtifactIDs: [])
+    }
+
+    public func selectNode(for constraints: HardConstraints, requiredArtifactIDs: [UUID]) throws -> SchedulerScore {
         guard !nodeDescriptors.isEmpty else {
             throw SchedulerError.noNodesRegistered
         }
@@ -239,7 +243,7 @@ public actor FabricScheduler {
             throw SchedulerError.noEligibleNode
         }
 
-        let scores = eligible.map { score(node: $0, constraints: constraints) }
+        let scores = eligible.map { score(node: $0, constraints: constraints, requiredArtifactIDs: requiredArtifactIDs) }
         guard let best = scores.max(by: { $0.total < $1.total }) else {
             throw SchedulerError.noEligibleNode
         }
@@ -275,7 +279,7 @@ public actor FabricScheduler {
 
     // MARK: - Scoring
 
-    private func score(node: NodeResourceDescriptor, constraints: HardConstraints) -> SchedulerScore {
+    private func score(node: NodeResourceDescriptor, constraints: HardConstraints, requiredArtifactIDs: [UUID] = []) -> SchedulerScore {
         let cpuScore = max(0, 1 - node.currentCPULoad)
         let memoryScore = node.totalMemoryBytes == 0 ? 0 : Double(node.availableMemoryBytes) / Double(node.totalMemoryBytes)
         let latency = measuredLatency[node.nodeID] ?? 100
@@ -284,21 +288,32 @@ public actor FabricScheduler {
         let thermalScore = node.thermalState.schedulerScore
         let energyScore = energyScore(for: node)
 
+        let localityScore: Double
+        if requiredArtifactIDs.isEmpty {
+            localityScore = 0.5
+        } else {
+            let locatedCount = requiredArtifactIDs.filter { artifactID in
+                artifactLocations[artifactID]?.contains(node.nodeID) ?? false
+            }.count
+            localityScore = Double(locatedCount) / Double(requiredArtifactIDs.count)
+        }
+
         let total = cpuScore * weights.cpuWeight
             + memoryScore * weights.memoryWeight
+            + localityScore * weights.localityWeight
             + latencyScore * weights.latencyWeight
             + reliability * weights.reliabilityWeight
             + thermalScore * weights.thermalWeight
             + energyScore * weights.energyWeight
 
-        let explanation = "CPU:\(String(format: "%.2f", cpuScore)) MEM:\(String(format: "%.2f", memoryScore)) LAT:\(String(format: "%.2f", latencyScore)) REL:\(String(format: "%.2f", reliability)) THM:\(String(format: "%.2f", thermalScore)) NRG:\(String(format: "%.2f", energyScore))"
+        let explanation = "CPU:\(String(format: "%.2f", cpuScore)) MEM:\(String(format: "%.2f", memoryScore)) LOC:\(String(format: "%.2f", localityScore)) LAT:\(String(format: "%.2f", latencyScore)) REL:\(String(format: "%.2f", reliability)) THM:\(String(format: "%.2f", thermalScore)) NRG:\(String(format: "%.2f", energyScore))"
 
         return SchedulerScore(
             nodeID: node.nodeID,
             total: total,
             computeScore: cpuScore,
             memoryScore: memoryScore,
-            localityScore: 0,
+            localityScore: localityScore,
             latencyScore: latencyScore,
             reliabilityScore: reliability,
             thermalScore: thermalScore,

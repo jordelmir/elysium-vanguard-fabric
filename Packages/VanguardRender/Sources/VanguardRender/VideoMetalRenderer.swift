@@ -4,6 +4,16 @@ import Metal
 import MetalKit
 import VanguardDomain
 
+public enum RendererError: Error, Sendable {
+    case metalUnavailable
+    case commandQueueCreationFailed
+    case textureCacheCreationFailed
+    case shaderCompilationFailed(String)
+    case pipelineStateCreationFailed(String)
+    case pixelBufferCreationFailed(Int32)
+    case textureCreationFailed(Int32)
+}
+
 public protocol MetalRenderer: Sendable {
     func renderFrame(_ data: Data, width: Int, height: Int) async throws
     func renderPixelBuffer(_ pixelBuffer: CVPixelBuffer) async throws
@@ -83,29 +93,45 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
     private var pendingTextureSize = CGSize.zero
     public var lastRenderTimestamp: TimeInterval = 0
 
-    public override init() {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            fatalError("Metal is not supported on this device")
-        }
+    private init(
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue,
+        pipelineState: MTLRenderPipelineState,
+        textureCache: CVMetalTextureCache
+    ) {
         self.device = device
+        self.commandQueue = commandQueue
+        self.pipelineState = pipelineState
+        self.textureCache = textureCache
+        super.init()
+
+        for _ in 0..<kMaxInflightBuffers {
+            vertexBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
+            texCoordBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
+            uniformBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 4, options: .storageModeShared)!)
+        }
+    }
+
+    public static func create() throws -> VideoMetalRenderer {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw RendererError.metalUnavailable
+        }
 
         guard let queue = device.makeCommandQueue() else {
-            fatalError("Failed to create Metal command queue")
+            throw RendererError.commandQueueCreationFailed
         }
-        self.commandQueue = queue
 
         var cache: CVMetalTextureCache?
         let cacheStatus = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
         guard cacheStatus == kCVReturnSuccess, let cache = cache else {
-            fatalError("Failed to create CVMetalTextureCache")
+            throw RendererError.textureCacheCreationFailed
         }
-        self.textureCache = cache
 
-        var library: MTLLibrary
+        let library: MTLLibrary
         do {
             library = try device.makeLibrary(source: metalShaderSource, options: nil)
         } catch {
-            fatalError("Failed to compile Metal shader: \(error)")
+            throw RendererError.shaderCompilationFailed("\(error)")
         }
 
         let vertexFunction = library.makeFunction(name: "vertexShader")
@@ -116,19 +142,19 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
         pipelineDescriptor.fragmentFunction = fragmentFunction
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
 
+        let pipelineState: MTLRenderPipelineState
         do {
-            self.pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+            pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
-            fatalError("Failed to create pipeline state: \(error)")
+            throw RendererError.pipelineStateCreationFailed("\(error)")
         }
 
-        super.init()
-
-        for _ in 0..<kMaxInflightBuffers {
-            vertexBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
-            texCoordBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
-            uniformBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 4, options: .storageModeShared)!)
-        }
+        return VideoMetalRenderer(
+            device: device,
+            commandQueue: queue,
+            pipelineState: pipelineState,
+            textureCache: cache
+        )
     }
 
     public func setMTKView(_ view: MTKView) {
@@ -158,14 +184,14 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
             &buffer
         )
         guard status == kCVReturnSuccess, let createdBuffer = buffer else {
-            throw NSError(domain: "VideoMetalRenderer", code: Int(status))
+            throw RendererError.pixelBufferCreationFailed(status)
         }
 
         CVPixelBufferLockBaseAddress(createdBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(createdBuffer, []) }
 
         guard let dest = CVPixelBufferGetBaseAddress(createdBuffer) else {
-            throw NSError(domain: "VideoMetalRenderer", code: -2)
+            throw RendererError.pixelBufferCreationFailed(-2)
         }
         let bytesPerRow = CVPixelBufferGetBytesPerRow(createdBuffer)
         let srcBytesPerRow = width * 4
@@ -201,7 +227,7 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
 
     public func renderPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) async throws {
         guard let textureCache = textureCache else {
-            throw NSError(domain: "VideoMetalRenderer", code: -3)
+            throw RendererError.textureCacheCreationFailed
         }
 
         var cvTexture: CVMetalTexture?
@@ -217,7 +243,7 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
             &cvTexture
         )
         guard status == kCVReturnSuccess, let cvTex = cvTexture else {
-            throw NSError(domain: "VideoMetalRenderer", code: Int(status))
+            throw RendererError.textureCreationFailed(status)
         }
 
         lock.withLock {

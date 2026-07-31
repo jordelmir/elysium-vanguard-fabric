@@ -5,6 +5,9 @@ import CryptoKit
 import VanguardDomain
 import VanguardProtocol
 import VanguardIdentity
+import os.log
+
+private let routeLogger = Logger(subsystem: "ElysiumVanguard", category: "Route")
 
 // MARK: - Transport Errors
 
@@ -185,6 +188,40 @@ public final class NetworkTransport: BonjourTransport, @unchecked Sendable {
         receiveTask = Task { [weak self] in await self?.runReceiveLoop() }
         sendTask = Task { [weak self] in await self?.runSendLoop() }
         heartbeatTask = Task { [weak self] in await self?.runHeartbeatLoop() }
+    }
+
+    // MARK: - Connect Via Relay
+
+    public func connectViaRelay(configuration: RelayConfiguration) async throws {
+        lock.withLock { _state = .connecting }
+
+        let parameters = try makeClientParameters()
+
+        guard let port = NWEndpoint.Port(rawValue: configuration.relayPort) else {
+            throw NWTransportError.invalidPort(configuration.relayPort)
+        }
+        let nwEndpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host(configuration.relayHost),
+            port: port
+        )
+
+        let conn = NWConnection(to: nwEndpoint, using: parameters)
+        self.connection = conn
+
+        try await waitUntilReady(conn, timeoutSeconds: 15)
+
+        isRunning = true
+        frameDecoder.reset()
+        flowController.reset()
+        metrics.reset()
+
+        lock.withLock { _state = .ready }
+
+        receiveTask = Task { [weak self] in await self?.runReceiveLoop() }
+        sendTask = Task { [weak self] in await self?.runSendLoop() }
+        heartbeatTask = Task { [weak self] in await self?.runHeartbeatLoop() }
+
+        routeLogger.info("Connected via relay to \(configuration.relayHost):\(configuration.relayPort)")
     }
 
     // MARK: - Listen (Protocol Conformance)
@@ -597,7 +634,7 @@ public final class NetworkTransport: BonjourTransport, @unchecked Sendable {
                         }
                         completionHandler(false)
                     },
-                    .main
+                    .global(qos: .userInitiated)
                 )
             }
 
