@@ -23,7 +23,7 @@ This builds all 3 targets: VanguardConsoleMac, VanguardNodeMac, VanguardCoordina
 ## Testing
 
 ```bash
-swift test --parallel    # 228 tests (54 XCTest + 174 Swift Testing)
+swift test --parallel    # 250 tests (76 XCTest + 174 Swift Testing)
 ```
 
 ## Code Standards
@@ -34,7 +34,7 @@ swift test --parallel    # 228 tests (54 XCTest + 174 Swift Testing)
 - Tests for all new functionality
 - No secrets in source code
 - Protocol-based abstractions at boundaries
-- Domain package has zero Apple framework imports
+- Domain package minimizes Apple imports (Foundation only; CoreMedia/CoreVideo for CapturedVideoFrame)
 
 ## Pull Requests
 

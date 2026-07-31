@@ -24,13 +24,13 @@ jobs:
         run: swift test --parallel 2>&1
 
       - name: Test with Thread Sanitizer
-        run: swift test --parallel --sanitize=thread 2>&1 || true
+        run: swift test --parallel --sanitize=thread 2>&1
 
       - name: Test with Address Sanitizer
-        run: swift test --parallel --sanitize=address 2>&1 || true
+        run: swift test --parallel --sanitize=address 2>&1
 
       - name: Test with Undefined Behavior Sanitizer
-        run: swift test --parallel --sanitize=undefined 2>&1 || true
+        run: swift test --parallel --sanitize=undefined 2>&1
 
       - name: Secret Scan
         run: |

@@ -473,6 +473,7 @@ let package = Package(
                 "VanguardTransport",
             ],
             path: "Apps/VanguardCoordinatorServer/Sources/VanguardCoordinatorServer",
+            resources: [.process("Assets.xcassets")],
             linkerSettings: [
                 .linkedFramework("Network"),
             ]
