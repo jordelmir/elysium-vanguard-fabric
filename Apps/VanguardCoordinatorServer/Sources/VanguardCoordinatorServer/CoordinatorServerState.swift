@@ -1,4 +1,5 @@
 import Foundation
+import os
 import VanguardCoordinator
 import VanguardProtocol
 import VanguardTransport
@@ -161,7 +162,7 @@ final class CoordinatorServerState: ObservableObject {
             )
             try? await transport.send(response)
         default:
-            break
+            os_log(.debug, "Coordinator ignoring message type: 0x%04X", message.header.messageType.rawValue)
         }
     }
 }

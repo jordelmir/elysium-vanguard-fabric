@@ -251,3 +251,12 @@
 - [x] build.sh updated with coordinator server bundle creation and signing
 - [x] CI/CD workflows (pr.yml, nightly.yml) verify coordinator server artifact
 - [x] 3 executable targets: VanguardConsoleMac, VanguardNodeMac, VanguardCoordinatorServer
+
+### Phase 23: Network Integration
+- [ ] Emergency stop propagation to remote node
+- [ ] Bidirectional clipboard sync over network
+- [ ] Job dispatch over network with progress/completion events
+- [ ] Agent plan dispatch over network
+- [ ] Workspace request/response over network
+- [ ] Terminal output streaming over network
+- [ ] Node telemetry snapshots to Console

@@ -63,6 +63,7 @@ Console                          Node
 | 0x0041| sessionClose        | control     | Close session |
 | 0x0050| heartbeat           | heartbeat   | Keepalive ping |
 | 0x0051| heartbeatAck        | heartbeat   | Keepalive pong |
+| 0x0060| emergencyStop       | control     | Emergency stop — release all keys, stop capture |
 | 0x0100| videoConfiguration  | video       | Codec config |
 | 0x0101| videoFrame          | video       | Video frame |
 | 0x0102| videoKeyframeRequest| video       | Request keyframe |
@@ -89,6 +90,33 @@ Console                          Node
 | 0x0900| resourceDescriptor  | control     | Node resources |
 | 0x0A00| workspaceSync       | control     | Workspace sync |
 | 0x0A01| workspaceChangeSet  | control     | Workspace changes |
+| 0x0A02| workspaceRequest    | control     | Workspace request |
+| 0x0A03| workspaceResponse   | control     | Workspace response |
+| 0x0B00| presenceRegister    | control     | Register node with coordinator |
+| 0x0B01| presenceDeregister  | control     | Deregister node |
+| 0x0B02| presenceHeartbeat   | control     | Presence heartbeat |
+| 0x0B03| presenceList        | control     | Request node list |
+| 0x0B04| presenceListResponse| control     | Node list response |
+| 0x0B10| rendezvousRequest   | control     | Request rendezvous |
+| 0x0B11| rendezvousOffer     | control     | Rendezvous offer |
+| 0x0B12| rendezvousAnswer    | control     | Rendezvous answer |
+| 0x0B13| rendezvousComplete  | control     | Rendezvous complete |
+| 0x0B14| rendezvousCancel    | control     | Rendezvous cancel |
+| 0x0B20| signalingOffer      | control     | SDP offer |
+| 0x0B21| signalingAnswer     | control     | SDP answer |
+| 0x0B22| signalingIceCandidate| control    | ICE candidate |
+| 0x0B23| signalingError      | control     | Signaling error |
+| 0x0B30| relayAllocate       | control     | Allocate relay channel |
+| 0x0B31| relayAllocateResponse| control    | Relay allocation response |
+| 0x0B32| relayForward        | control     | Forward packet via relay |
+| 0x0B33| relayForwardAck     | control     | Relay forward ACK |
+| 0x0B34| relayRelease        | control     | Release relay channel |
+| 0x0C00| clipboardData       | control     | Clipboard data sync |
+| 0x0D00| agentSubmit         | control     | Submit agent plan |
+| 0x0D01| agentProgress       | control     | Agent plan progress |
+| 0x0D02| agentCompleted      | control     | Agent plan completed |
+| 0x0D03| agentFailed         | control     | Agent plan failed |
+| 0x0FFF| error               | control     | Error response |
 
 ## Channels
 

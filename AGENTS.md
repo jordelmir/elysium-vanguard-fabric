@@ -24,7 +24,7 @@ cd elysium-vanguard-fabric
 ```bash
 swift build                    # debug build
 swift build -c release         # release build
-swift test --parallel          # run all tests (~228 tests)
+swift test --parallel          # run all tests (~378 tests)
 ```
 
 Both apps also build as macOS applications:

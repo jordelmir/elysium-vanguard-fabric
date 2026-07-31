@@ -348,6 +348,63 @@ actor RelayService {
 
 ---
 
+## Package: VanguardSession
+
+Session lifecycle coordination for Console and Node.
+
+### ConsoleSessionCoordinator
+
+```swift
+actor ConsoleSessionCoordinator {
+    func openSession(to nodeID: NodeID, transport: VanguardTransport) async throws
+    func closeSession(_ sessionID: SessionID) async
+    func sendInput(_ event: InputEvent, to sessionID: SessionID) async throws
+    func openTerminal(on sessionID: SessionID) async throws -> TerminalSessionID
+    func sendTerminalInput(_ data: Data, to terminalID: TerminalSessionID) async throws
+    func closeTerminal(_ terminalID: TerminalSessionID) async
+    func requestClipboard(on sessionID: SessionID) async throws
+    func sendClipboardContent(_ content: Data, to sessionID: SessionID) async throws
+    func switchToWindow(_ windowID: WindowID, on sessionID: SessionID) async throws
+    func switchToDisplay(_ displayID: DisplayID, on sessionID: SessionID) async throws
+    func getAvailableWindows(on sessionID: SessionID) async throws -> [RemoteWindowDescriptor]
+    func getAvailableDisplays(on sessionID: SessionID) async throws -> [DisplayDescriptor]
+    func requestKeyframe(on sessionID: SessionID) async throws
+    func sendEmergencyStop(to sessionID: SessionID) async throws
+    func submitAgentPlan(_ plan: AgentPlan, to sessionID: SessionID) async throws -> UUID
+    func requestWorkspace(on sessionID: SessionID) async throws
+    func requestSync(on sessionID: SessionID) async throws
+}
+```
+
+### NodeSessionCoordinator
+
+```swift
+actor NodeSessionCoordinator {
+    func startListening(port: UInt16) async throws
+    func stopListening() async
+    func handleIncomingConnection(_ connection: NWConnection) async
+    func startCapture(for sessionID: SessionID) async throws
+    func stopCapture(for sessionID: SessionID) async
+    func sendVideoFrame(_ frame: EncodedFrame, to sessionID: SessionID) async throws
+    func handleInputEvent(_ event: InputEvent, from sessionID: SessionID) async throws
+    func openTerminalSession(for sessionID: SessionID) async throws -> TerminalSessionID
+    func sendTerminalOutput(_ data: Data, to sessionID: SessionID) async throws
+    func closeTerminalSession(_ terminalID: TerminalSessionID) async
+    func sendClipboardContent(_ content: Data, to sessionID: SessionID) async throws
+    func handleClipboardRequest(from sessionID: SessionID) async throws
+    func switchToWindow(_ windowID: WindowID, for sessionID: SessionID) async throws
+    func switchToDisplay(_ displayID: DisplayID, for sessionID: SessionID) async throws
+    func getAvailableWindows() async throws -> [RemoteWindowDescriptor]
+    func getAvailableDisplays() async throws -> [DisplayDescriptor]
+    func handleEmergencyStop(from sessionID: SessionID) async
+    func handleAgentPlan(_ plan: AgentPlan, from sessionID: SessionID) async throws -> UUID
+    func sendWorkspaceSnapshot(to sessionID: SessionID) async throws
+    func sendNodeTelemetry(to sessionID: SessionID) async throws
+}
+```
+
+---
+
 ## Package: VanguardUpdates
 
 Signed update mechanism.

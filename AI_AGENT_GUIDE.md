@@ -152,7 +152,7 @@ Packages/
 
 Protocol/
 ├── specification.md       ← Full protocol spec
-├── messages.md            ← All 32 message types
+├── messages.md            ← All 69 message types
 ├── versioning.md          ← Version negotiation
 ├── framing.md             ← Binary header structures
 ├── security.md            ← TLS, identity, pairing
@@ -176,7 +176,7 @@ docs/
 | File | Purpose |
 |------|---------|
 | `AGENTS.md` | Master guide — start here |
-| `Protocol/messages.md` | All 32 message types with field definitions |
+| `Protocol/messages.md` | All 69 message types with field definitions |
 | `Protocol/specification.md` | Protocol overview and connection flow |
 | `Protocol/schema.md` | Language-agnostic wire format |
 | `docs/API.md` | Public API for all packages |

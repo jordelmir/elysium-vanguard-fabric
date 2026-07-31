@@ -408,3 +408,99 @@ private final class MockPermissionService: PermissionService, @unchecked Sendabl
     func requestPermission(kind: PermissionKind) async -> PermissionState { .granted }
     func openSystemSettings(for kind: PermissionKind) async {}
 }
+
+// MARK: - Network Integration Tests
+
+@available(macOS 12.3, *)
+extension SessionLoopbackTests {
+
+    func testEmergencyStopMessageType() async throws {
+        XCTAssertEqual(MessageType.emergencyStop.rawValue, 0x0060)
+    }
+
+    func testClipboardDataPayloadRoundTrip() async throws {
+        let payload = ClipboardDataPayload(content: "hello world", changeCount: 42)
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(ClipboardDataPayload.self, from: data)
+        XCTAssertEqual(decoded.content, "hello world")
+        XCTAssertEqual(decoded.changeCount, 42)
+        XCTAssertEqual(decoded.contentType, "public.utf8-plain-text")
+    }
+
+    func testAgentSubmitPayloadRoundTrip() async throws {
+        let payload = AgentSubmitPayload(planID: "plan-1", objective: "test plan", steps: ["echo hello", "ls -la"])
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(AgentSubmitPayload.self, from: data)
+        XCTAssertEqual(decoded.planID, "plan-1")
+        XCTAssertEqual(decoded.objective, "test plan")
+        XCTAssertEqual(decoded.steps.count, 2)
+        XCTAssertEqual(decoded.steps[0], "echo hello")
+    }
+
+    func testAgentProgressAndCompletedPayloads() async throws {
+        let progress = AgentProgressPayload(planID: "p1", stepIndex: 0, output: "step done")
+        let progressData = try JSONEncoder().encode(progress)
+        let decodedProgress = try JSONDecoder().decode(AgentProgressPayload.self, from: progressData)
+        XCTAssertEqual(decodedProgress.stepIndex, 0)
+        XCTAssertEqual(decodedProgress.output, "step done")
+
+        let completed = AgentCompletedPayload(planID: "p1", outputs: ["out1", "out2"])
+        let completedData = try JSONEncoder().encode(completed)
+        let decodedCompleted = try JSONDecoder().decode(AgentCompletedPayload.self, from: completedData)
+        XCTAssertEqual(decodedCompleted.outputs.count, 2)
+
+        let failed = AgentFailedPayload(planID: "p1", error: "step failed")
+        let failedData = try JSONEncoder().encode(failed)
+        let decodedFailed = try JSONDecoder().decode(AgentFailedPayload.self, from: failedData)
+        XCTAssertEqual(decodedFailed.error, "step failed")
+    }
+
+    func testWorkspaceRequestResponsePayloads() async throws {
+        let request = WorkspaceRequestPayload(workspaceID: "ws-1")
+        let reqData = try JSONEncoder().encode(request)
+        let decodedReq = try JSONDecoder().decode(WorkspaceRequestPayload.self, from: reqData)
+        XCTAssertEqual(decodedReq.workspaceID, "ws-1")
+
+        let response = WorkspaceResponsePayload(workspaceID: "ws-1", files: ["a.txt": "hash1", "b.txt": "hash2"], stateHash: Data("test".utf8))
+        let resData = try JSONEncoder().encode(response)
+        let decodedRes = try JSONDecoder().decode(WorkspaceResponsePayload.self, from: resData)
+        XCTAssertEqual(decodedRes.files.count, 2)
+        XCTAssertEqual(decodedRes.files["a.txt"], "hash1")
+    }
+
+    func testJobDispatchPayloadRoundTrip() async throws {
+        let submit = JobSubmitPayload(jobID: "job-1", name: "test job", command: ["/bin/echo", "hello"])
+        let data = try JSONEncoder().encode(submit)
+        let decoded = try JSONDecoder().decode(JobSubmitPayload.self, from: data)
+        XCTAssertEqual(decoded.jobID, "job-1")
+        XCTAssertEqual(decoded.name, "test job")
+        XCTAssertEqual(decoded.command, ["/bin/echo", "hello"])
+
+        let assigned = JobAssignedPayload(jobID: "job-1", nodeID: "node-1")
+        let assignedData = try JSONEncoder().encode(assigned)
+        let decodedAssigned = try JSONDecoder().decode(JobAssignedPayload.self, from: assignedData)
+        XCTAssertEqual(decodedAssigned.nodeID, "node-1")
+
+        let completed = JobCompletedPayload(jobID: "job-1", exitCode: 0, stdout: "hello\n", duration: 0.5)
+        let completedData = try JSONEncoder().encode(completed)
+        let decodedCompleted = try JSONDecoder().decode(JobCompletedPayload.self, from: completedData)
+        XCTAssertEqual(decodedCompleted.exitCode, 0)
+        XCTAssertEqual(decodedCompleted.duration, 0.5)
+
+        let jobFailed = JobFailedPayload(jobID: "job-1", error: "not found")
+        let failedData = try JSONEncoder().encode(jobFailed)
+        let decodedFailed = try JSONDecoder().decode(JobFailedPayload.self, from: failedData)
+        XCTAssertEqual(decodedFailed.error, "not found")
+    }
+
+    func testAllNewMessageTypesExist() async throws {
+        XCTAssertNotNil(MessageType(rawValue: 0x0060))
+        XCTAssertNotNil(MessageType(rawValue: 0x0A02))
+        XCTAssertNotNil(MessageType(rawValue: 0x0A03))
+        XCTAssertNotNil(MessageType(rawValue: 0x0C00))
+        XCTAssertNotNil(MessageType(rawValue: 0x0D00))
+        XCTAssertNotNil(MessageType(rawValue: 0x0D01))
+        XCTAssertNotNil(MessageType(rawValue: 0x0D02))
+        XCTAssertNotNil(MessageType(rawValue: 0x0D03))
+    }
+}

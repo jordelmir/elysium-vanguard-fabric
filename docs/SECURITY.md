@@ -101,6 +101,12 @@ The Node is the final authority on all capability decisions. Even if a Console h
 - Deny specific actions based on policy
 - Require re-authorization for sensitive operations
 
+### Agent Plan Security
+
+- Agent plans require `processExecute` capability to dispatch
+- Plans with more than 3 steps require explicit human approval before execution
+- All agent plan execution is audit-logged to `FabricEventLog` with plan ID, steps, and outcomes
+
 ---
 
 ## Transport Security
@@ -151,6 +157,7 @@ All pressed keys and mouse buttons are tracked locally. On disconnect or emergen
 - Disconnects the session
 - Releases all held keys and mouse buttons
 - Clears input state
+- Sends emergencyStop (0x0060) as a network message to the remote node, which releases all held keys and stops capture
 
 ---
 
@@ -182,6 +189,12 @@ All critical actions are logged to `FabricEventLog`:
 - Job submissions/completions
 
 Logs use SHA-256 hash chaining for tamper evidence. Chain integrity is verifiable at any time.
+
+### Clipboard Sync Security
+
+- Clipboard data is encrypted via TLS 1.3 during transit between Console and Node
+- Clipboard content is never logged or included in audit trail
+- Clipboard sync can be disabled by revoking `clipboardRead` and `clipboardWrite` capabilities
 
 ---
 

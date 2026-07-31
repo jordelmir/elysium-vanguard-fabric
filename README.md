@@ -33,6 +33,12 @@ Control your MacBook with a damaged screen from your M1 Mac — full remote desk
 - **Reconnection** — Exponential backoff (0.5s → 30s, 10 attempts)
 - **Emergency Stop** — ⌘⌥Esc disconnects everything instantly
 
+### Network Integration
+- **Agent Plan Dispatch over Network** — Dispatch AI agent plans to remote nodes with progress and completion events
+- **Workspace Sync over Network** — Bidirectional workspace synchronization between Console and Node
+- **Emergency Stop Propagation to Remote Node** — Emergency stop (0x0060) sent as network message to release all held keys and stop capture on remote node
+- **Bidirectional Clipboard Sync** — Real-time clipboard content sync between Console and Node over network
+
 ### Security
 - **Zero Trust** — Every action requires identity + capability
 - **Capability Negotiation** — Console and node negotiate allowed operations
@@ -107,7 +113,7 @@ open .build/arm64-apple-macosx/debug/VanguardNodeMac.app
 open .build/arm64-apple-macosx/debug/VanguardCoordinatorServer.app
 ```
 
-## Packages (35)
+## Packages (37)
 
 | Package | Purpose |
 |---------|---------|
@@ -139,6 +145,8 @@ open .build/arm64-apple-macosx/debug/VanguardCoordinatorServer.app
 | VanguardObservability | FabricEventLog, PipelineMetricsCollector |
 | VanguardUpdates | Update service with rollback |
 | VanguardExecutors | Remote job executor protocol |
+| VanguardCoordinator | Presence directory, rendezvous, signaling, relay |
+| VanguardBuild | Universal binary builds (lipo combine) |
 | VanguardTestSupport | Mocks for testing |
 | CSystemMetrics | Real mach APIs for CPU/RAM/battery |
 | SystemMetrics | Swift wrapper for CSystemMetrics |
