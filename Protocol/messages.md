@@ -527,11 +527,63 @@ Bidirectional clipboard synchronization.
 
 ---
 
+## Agent Messages
+
+### agentSubmit (0x0D00)
+
+Submit an agent plan for remote execution.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| planID | string | Plan identifier |
+| objective | string | Human-readable objective |
+| steps | [string] | Shell commands to execute in order |
+
+### agentProgress (0x0D01)
+
+Agent step progress update.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| planID | string | Plan identifier |
+| stepIndex | u32 | Current step index |
+| output | string | Step output |
+
+### agentCompleted (0x0D02)
+
+Agent plan completed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| planID | string | Plan identifier |
+| outputs | [string] | Output from each step |
+
+### agentFailed (0x0D03)
+
+Agent plan failed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| planID | string | Plan identifier |
+| error | string | Error message |
+
+---
+
+## Emergency Stop
+
+### emergencyStop (0x0060)
+
+Emergency stop — releases all held keys and buttons on Node.
+
+No payload.
+
+---
+
 ## Channel Assignment Summary
 
 | Channel | Messages | Delivery | Max Payload |
 |---------|----------|----------|-------------|
-| 0 (control) | hello, helloAck, pairing*, sessionOpen/Close, capability*, flowControlAck, artifactManifest, artifactRequest, job*, resourceDescriptor, workspaceSync, clipboardData | reliable | 1 MiB |
+| 0 (control) | hello, helloAck, pairing*, sessionOpen/Close, capability*, flowControlAck, artifactManifest, artifactRequest, job*, resourceDescriptor, workspaceSync, clipboardData, emergencyStop, agent*, workspaceRequest/Response | reliable | 1 MiB |
 | 1 (inputReliable) | inputEvent | reliable | 256 B |
 | 2 (inputEphemeral) | inputEvent (mouse moves) | best-effort | 256 B |
 | 3 (video) | videoConfiguration, videoFrame, videoKeyframeRequest, videoAccessUnit | best-effort | 8 MiB |

@@ -406,6 +406,11 @@ public final class ConsoleAppState: ObservableObject {
             let snapshot = await workspaceService.createSnapshot(name: name, fileHashes: hashes)
             workspaceSnapshots.insert(snapshot, at: 0)
             appendAudit("Workspace snapshot created: \(name) (\(files.count) files)", severity: .info)
+
+            if isConnected, let coordinator = coordinator {
+                try? await coordinator.requestWorkspace(workspaceID: snapshot.workspaceID.rawValue.uuidString)
+                appendAudit("Workspace sync requested from node", severity: .info)
+            }
         }
     }
 
@@ -434,6 +439,26 @@ public final class ConsoleAppState: ObservableObject {
         appendAudit("Agent plan created: \(objective)", severity: .info)
 
         Task {
+            if isConnected, let coordinator = coordinator {
+                do {
+                    try await coordinator.submitAgentPlan(
+                        planID: plan.planID.uuidString,
+                        objective: objective,
+                        steps: steps
+                    )
+                    if let idx = agentPlans.firstIndex(where: { $0.id == tracked.id }) {
+                        agentPlans[idx].state = .executing
+                    }
+                    appendAudit("Agent plan dispatched to node: \(objective)", severity: .info)
+                } catch {
+                    if let idx = agentPlans.firstIndex(where: { $0.id == tracked.id }) {
+                        agentPlans[idx].state = .failed(error.localizedDescription)
+                    }
+                    appendAudit("Agent plan dispatch failed: \(error.localizedDescription)", severity: .error)
+                }
+                return
+            }
+
             var updated = tracked
             updated.state = .validating
             if let idx = agentPlans.firstIndex(where: { $0.id == tracked.id }) {
@@ -619,6 +644,8 @@ public final class ConsoleAppState: ObservableObject {
 
             Task { await observeCoordinatorState() }
             Task { await observeJobEvents() }
+            Task { await observeClipboardFromNode() }
+            Task { await observeAgentEvents() }
         } catch {
             statusMessage = "Failed to scan: \(error.localizedDescription)"
             appendAudit("Scan failed: \(error.localizedDescription)", severity: .error)
@@ -976,6 +1003,48 @@ public final class ConsoleAppState: ObservableObject {
         }
     }
 
+    private func observeClipboardFromNode() async {
+        guard let coordinator = coordinator else { return }
+        for await payload in await coordinator.clipboardUpdates {
+            await MainActor.run {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(payload.content, forType: .string)
+            }
+            appendAudit("Clipboard updated from node (\(payload.content.count) chars)", severity: .info)
+        }
+    }
+
+    private func observeAgentEvents() async {
+        guard let coordinator = coordinator else { return }
+        for await event in await coordinator.agentEventUpdates {
+            switch event {
+            case .progress(let planID, let stepIndex, let output):
+                if let idx = agentPlans.firstIndex(where: { $0.plan.planID.uuidString == planID }) {
+                    agentPlans[idx].state = .executing
+                    if stepIndex < agentPlans[idx].stepOutputs.count {
+                        agentPlans[idx].stepOutputs[stepIndex] = output
+                    } else {
+                        agentPlans[idx].stepOutputs.append(output)
+                    }
+                }
+            case .completed(let planID, let outputs):
+                if let idx = agentPlans.firstIndex(where: { $0.plan.planID.uuidString == planID }) {
+                    agentPlans[idx].state = .completed
+                    agentPlans[idx].stepOutputs = outputs
+                }
+                appendAudit("Remote agent plan completed: \(planID.prefix(8))", severity: .success)
+                await refreshFabricEvents()
+            case .failed(let planID, let error):
+                if let idx = agentPlans.firstIndex(where: { $0.plan.planID.uuidString == planID }) {
+                    agentPlans[idx].state = .failed(error)
+                }
+                appendAudit("Remote agent plan failed: \(planID.prefix(8)) — \(error)", severity: .error)
+                await refreshFabricEvents()
+            }
+        }
+    }
+
     // MARK: - Reconnection
 
     private func startReconnection(to node: DiscoveredNode) {
@@ -1121,6 +1190,10 @@ public final class ConsoleAppState: ObservableObject {
         appendAudit("EMERGENCY STOP triggered", severity: .error)
         await eventLog.record(.emergencyStop)
         await refreshFabricEvents()
+        if isConnected, let coordinator = coordinator {
+            let message = OutboundMessage(messageType: .emergencyStop, payload: Data())
+            try? await coordinator.sendEmergencyStop()
+        }
         stopClipboardSync()
         cancelReconnection()
         await coordinator?.disconnect()

@@ -158,6 +158,7 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case sessionClose = 0x0041
     case heartbeat = 0x0050
     case heartbeatAck = 0x0051
+    case emergencyStop = 0x0060
     case videoConfiguration = 0x0100
     case videoFrame = 0x0101
     case videoKeyframeRequest = 0x0102
@@ -185,6 +186,8 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case resourceDescriptor = 0x0900
     case workspaceSync = 0x0A00
     case workspaceChangeSet = 0x0A01
+    case workspaceRequest = 0x0A02
+    case workspaceResponse = 0x0A03
 
     // Coordinator — Presence
     case presenceRegister = 0x0B00
@@ -215,6 +218,12 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
 
     // Clipboard
     case clipboardData = 0x0C00
+
+    // Agent
+    case agentSubmit = 0x0D00
+    case agentProgress = 0x0D01
+    case agentCompleted = 0x0D02
+    case agentFailed = 0x0D03
 }
 
 // MARK: - Message Flags

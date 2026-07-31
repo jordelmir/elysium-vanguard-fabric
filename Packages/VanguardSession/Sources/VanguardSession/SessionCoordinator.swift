@@ -3,6 +3,7 @@ import os
 import CoreVideo
 import Network
 import AppKit
+import CryptoKit
 import VanguardDomain
 import VanguardProtocol
 import VanguardTransport
@@ -272,6 +273,20 @@ public actor NodeSessionCoordinator {
                     let openedData = try JSONEncoder().encode(openedPayload)
                     let openedMsg = OutboundMessage(messageType: .terminalOutput, payload: openedData)
                     try await transport.send(openedMsg)
+
+                    let termTransport = self.transport
+                    Task {
+                        do {
+                            for try await data in self.terminalService.getOutput(sessionID: handle.sessionID, fromOffset: 0) {
+                                let outPayload = TerminalOutputPayload(sessionID: handle.sessionID, data: data, offset: 0)
+                                if let outData = try? JSONEncoder().encode(outPayload) {
+                                    try? await termTransport.send(OutboundMessage(messageType: .terminalOutput, payload: outData))
+                                }
+                            }
+                        } catch {
+                            AppLogger.error(.terminal, "Terminal output stream ended: \(error.localizedDescription)")
+                        }
+                    }
                 }
             } catch {
                 AppLogger.error(.terminal, "Failed to handle terminal open: \(error.localizedDescription)")
@@ -303,6 +318,14 @@ public actor NodeSessionCoordinator {
                 }
                 AppLogger.info(.session, "Clipboard updated from console (\(payload.content.count) chars)")
             }
+        case .emergencyStop:
+            AppLogger.warning(.node, "Emergency stop received from console")
+            await inputService.releaseAllKeys()
+            stopCapture()
+        case .agentSubmit:
+            await handleAgentSubmit(message)
+        case .workspaceRequest:
+            await handleWorkspaceRequest(message)
         default:
             break
         }
@@ -475,14 +498,146 @@ public actor NodeSessionCoordinator {
         activeJobs.removeValue(forKey: id)
     }
 
+    // MARK: - Agent Execution
+
+    private func handleAgentSubmit(_ message: InboundMessage) async {
+        guard let payload = try? JSONDecoder().decode(AgentSubmitPayload.self, from: message.payload) else {
+            AppLogger.error(.node, "Failed to decode agent submit payload")
+            return
+        }
+
+        AppLogger.info(.node, "Received agent plan: \(payload.objective) (id: \(payload.planID))")
+
+        if let sessionID = currentSession?.sessionID,
+           await authorizationGuard?.checkCapability(.processExecute, sessionID: sessionID) == false {
+            let failedPayload = AgentFailedPayload(planID: payload.planID, error: "Missing processExecute capability")
+            if let data = try? JSONEncoder().encode(failedPayload) {
+                try? await transport.send(OutboundMessage(messageType: .agentFailed, payload: data))
+            }
+            return
+        }
+
+        let agentTransport = self.transport
+        let planID = payload.planID
+
+        Task {
+            var outputs: [String] = []
+            for (index, step) in payload.steps.enumerated() {
+                let progressPayload = AgentProgressPayload(planID: planID, stepIndex: index, output: "Starting: \(step)")
+                if let data = try? JSONEncoder().encode(progressPayload) {
+                    try? await agentTransport.send(OutboundMessage(messageType: .agentProgress, payload: data))
+                }
+
+                do {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                    process.arguments = ["-c", step]
+                    let pipe = Pipe()
+                    process.standardOutput = pipe
+                    process.standardError = pipe
+                    try process.run()
+                    process.waitUntilExit()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8) ?? ""
+                    outputs.append(output)
+
+                    let donePayload = AgentProgressPayload(planID: planID, stepIndex: index, output: output)
+                    if let d = try? JSONEncoder().encode(donePayload) {
+                        try? await agentTransport.send(OutboundMessage(messageType: .agentProgress, payload: d))
+                    }
+                } catch {
+                    let errPayload = AgentFailedPayload(planID: planID, error: "Step \(index) failed: \(error.localizedDescription)")
+                    if let data = try? JSONEncoder().encode(errPayload) {
+                        try? await agentTransport.send(OutboundMessage(messageType: .agentFailed, payload: data))
+                    }
+                    return
+                }
+            }
+
+            let completedPayload = AgentCompletedPayload(planID: planID, outputs: outputs)
+            if let data = try? JSONEncoder().encode(completedPayload) {
+                try? await agentTransport.send(OutboundMessage(messageType: .agentCompleted, payload: data))
+            }
+            AppLogger.info(.node, "Agent plan completed: \(payload.objective)")
+        }
+    }
+
+    // MARK: - Workspace Sync
+
+    private func handleWorkspaceRequest(_ message: InboundMessage) async {
+        guard let payload = try? JSONDecoder().decode(WorkspaceRequestPayload.self, from: message.payload) else { return }
+
+        let fileManager = FileManager.default
+        let workspacePath = NSHomeDirectory() + "/Library/Application Support/ElysiumVanguardFabric/Workspaces/\(payload.workspaceID)"
+        var files: [String: String] = [:]
+
+        if let enumerator = fileManager.enumerator(atPath: workspacePath) {
+            while let relativePath = enumerator.nextObject() as? String {
+                let fullPath = (workspacePath as NSString).appendingPathComponent(relativePath)
+                if let data = fileManager.contents(atPath: fullPath) {
+                    let hash = data.sha256Hex
+                    files[relativePath] = hash
+                }
+            }
+        }
+
+        let responsePayload = WorkspaceResponsePayload(
+            workspaceID: payload.workspaceID,
+            files: files,
+            stateHash: Data(files.keys.sorted().joined().utf8).sha256
+        )
+        if let data = try? JSONEncoder().encode(responsePayload) {
+            try? await transport.send(OutboundMessage(messageType: .workspaceResponse, payload: data))
+        }
+    }
+
     // MARK: - Video Capture
 
     private func startCaptureLoop() async {
         guard !isCapturing else { return }
         isCapturing = true
 
+        let nodeID = currentSession?.consoleID.rawValue.uuidString.prefix(8).description ?? "unknown"
+
         captureTask = Task { [weak self] in
             guard let self else { return }
+
+            Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    guard !Task.isCancelled else { break }
+                    let payload = TelemetrySnapshotPayload(
+                        nodeID: nodeID,
+                        cpuLoad: 0,
+                        memoryPressure: 0,
+                        availableMemoryBytes: 0,
+                        batteryLevel: 1.0,
+                        thermalState: 0
+                    )
+                    if let data = try? JSONEncoder().encode(payload) {
+                        try? await self.transport.send(OutboundMessage(messageType: .telemetrySnapshot, payload: data))
+                    }
+                }
+            }
+
+            Task {
+                var lastChangeCount = await MainActor.run { NSPasteboard.general.changeCount }
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { break }
+                    let currentChangeCount = await MainActor.run { NSPasteboard.general.changeCount }
+                    if currentChangeCount != lastChangeCount {
+                        lastChangeCount = currentChangeCount
+                        let content = await MainActor.run { NSPasteboard.general.string(forType: .string) ?? "" }
+                        if !content.isEmpty {
+                            let clipPayload = ClipboardDataPayload(content: content, changeCount: currentChangeCount)
+                            if let data = try? JSONEncoder().encode(clipPayload) {
+                                try? await self.transport.send(OutboundMessage(messageType: .clipboardData, payload: data))
+                            }
+                        }
+                    }
+                }
+            }
 
             do {
                 let sources = try await self.captureService.availableSources()
@@ -749,6 +904,18 @@ private final class JobOutputAccumulator: Sendable {
     func appendStderr(_ text: String) { lock.lock(); _stderr += text; lock.unlock() }
 }
 
+// MARK: - Data SHA-256
+
+extension Data {
+    var sha256: Data {
+        Data(SHA256.hash(data: self))
+    }
+
+    var sha256Hex: String {
+        SHA256.hash(data: self).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 // MARK: - Console Session Coordinator
 
 public actor ConsoleSessionCoordinator {
@@ -769,6 +936,8 @@ public actor ConsoleSessionCoordinator {
     private var messageTask: Task<Void, Never>?
     private var jobEventContinuation: AsyncStream<JobEvent>.Continuation?
     private var clipboardContinuation: AsyncStream<ClipboardDataPayload>.Continuation?
+    private var agentEventContinuation: AsyncStream<AgentEvent>.Continuation?
+    private var workspaceContinuation: AsyncStream<WorkspaceResponsePayload>.Continuation?
 
     public struct ConsoleSession {
         public let sessionID: SessionID
@@ -783,6 +952,12 @@ public actor ConsoleSessionCoordinator {
         case completed(jobID: String, exitCode: Int32, stdout: String?, stderr: String?, duration: TimeInterval)
         case failed(jobID: String, error: String)
         case cancelled(jobID: String)
+    }
+
+    public enum AgentEvent: Sendable {
+        case progress(planID: String, stepIndex: Int, output: String)
+        case completed(planID: String, outputs: [String])
+        case failed(planID: String, error: String)
     }
 
     public enum ConsoleState: Sendable, Equatable {
@@ -839,6 +1014,18 @@ public actor ConsoleSessionCoordinator {
     public var clipboardUpdates: AsyncStream<ClipboardDataPayload> {
         AsyncStream { continuation in
             self.clipboardContinuation = continuation
+        }
+    }
+
+    public var agentEventUpdates: AsyncStream<AgentEvent> {
+        AsyncStream { continuation in
+            self.agentEventContinuation = continuation
+        }
+    }
+
+    public var workspaceUpdates: AsyncStream<WorkspaceResponsePayload> {
+        AsyncStream { continuation in
+            self.workspaceContinuation = continuation
         }
     }
 
@@ -1007,6 +1194,31 @@ public actor ConsoleSessionCoordinator {
         try await transport.send(message)
     }
 
+    // MARK: - Emergency Stop
+
+    public func sendEmergencyStop() async throws {
+        let message = OutboundMessage(messageType: .emergencyStop, payload: Data())
+        try await transport.send(message)
+    }
+
+    // MARK: - Agent Dispatch
+
+    public func submitAgentPlan(planID: String, objective: String, steps: [String]) async throws {
+        let payload = AgentSubmitPayload(planID: planID, objective: objective, steps: steps)
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .agentSubmit, payload: data)
+        try await transport.send(message)
+    }
+
+    // MARK: - Workspace Sync
+
+    public func requestWorkspace(workspaceID: String) async throws {
+        let payload = WorkspaceRequestPayload(workspaceID: workspaceID)
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .workspaceRequest, payload: data)
+        try await transport.send(message)
+    }
+
     // MARK: - Terminal
 
     public func openTerminal(configuration: TerminalConfiguration) async throws -> TerminalSessionHandle {
@@ -1111,6 +1323,26 @@ public actor ConsoleSessionCoordinator {
         case .clipboardData:
             if let payload = try? JSONDecoder().decode(ClipboardDataPayload.self, from: message.payload) {
                 clipboardContinuation?.yield(payload)
+            }
+        case .agentProgress:
+            if let payload = try? JSONDecoder().decode(AgentProgressPayload.self, from: message.payload) {
+                agentEventContinuation?.yield(.progress(planID: payload.planID, stepIndex: payload.stepIndex, output: payload.output))
+            }
+        case .agentCompleted:
+            if let payload = try? JSONDecoder().decode(AgentCompletedPayload.self, from: message.payload) {
+                agentEventContinuation?.yield(.completed(planID: payload.planID, outputs: payload.outputs))
+            }
+        case .agentFailed:
+            if let payload = try? JSONDecoder().decode(AgentFailedPayload.self, from: message.payload) {
+                agentEventContinuation?.yield(.failed(planID: payload.planID, error: payload.error))
+            }
+        case .workspaceResponse:
+            if let payload = try? JSONDecoder().decode(WorkspaceResponsePayload.self, from: message.payload) {
+                workspaceContinuation?.yield(payload)
+            }
+        case .telemetrySnapshot:
+            if let payload = try? JSONDecoder().decode(TelemetrySnapshotPayload.self, from: message.payload) {
+                AppLogger.info(.session, "Telemetry from \(payload.nodeID): CPU \(Int(payload.cpuLoad * 100))%, mem \(Int(payload.memoryPressure * 100))%")
             }
         case .heartbeatAck:
             break

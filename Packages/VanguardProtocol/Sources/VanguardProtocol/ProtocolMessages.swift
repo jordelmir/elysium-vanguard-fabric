@@ -370,6 +370,26 @@ public struct FlowControlAckPayload: Codable, Sendable {
     }
 }
 
+// MARK: - Telemetry Payload
+
+public struct TelemetrySnapshotPayload: Codable, Sendable {
+    public let nodeID: String
+    public let cpuLoad: Double
+    public let memoryPressure: Double
+    public let availableMemoryBytes: UInt64
+    public let batteryLevel: Double
+    public let thermalState: UInt8
+
+    public init(nodeID: String, cpuLoad: Double, memoryPressure: Double, availableMemoryBytes: UInt64, batteryLevel: Double, thermalState: UInt8) {
+        self.nodeID = nodeID
+        self.cpuLoad = cpuLoad
+        self.memoryPressure = memoryPressure
+        self.availableMemoryBytes = availableMemoryBytes
+        self.batteryLevel = batteryLevel
+        self.thermalState = thermalState
+    }
+}
+
 // MARK: - Job Payloads
 
 public struct JobSubmitPayload: Codable, Sendable {
@@ -519,5 +539,73 @@ public struct ClipboardDataPayload: Codable, Sendable {
         self.content = content
         self.contentType = contentType
         self.changeCount = changeCount
+    }
+}
+
+// MARK: - Agent Payloads
+
+public struct AgentSubmitPayload: Codable, Sendable {
+    public let planID: String
+    public let objective: String
+    public let steps: [String]
+
+    public init(planID: String, objective: String, steps: [String]) {
+        self.planID = planID
+        self.objective = objective
+        self.steps = steps
+    }
+}
+
+public struct AgentProgressPayload: Codable, Sendable {
+    public let planID: String
+    public let stepIndex: Int
+    public let output: String
+
+    public init(planID: String, stepIndex: Int, output: String) {
+        self.planID = planID
+        self.stepIndex = stepIndex
+        self.output = output
+    }
+}
+
+public struct AgentCompletedPayload: Codable, Sendable {
+    public let planID: String
+    public let outputs: [String]
+
+    public init(planID: String, outputs: [String]) {
+        self.planID = planID
+        self.outputs = outputs
+    }
+}
+
+public struct AgentFailedPayload: Codable, Sendable {
+    public let planID: String
+    public let error: String
+
+    public init(planID: String, error: String) {
+        self.planID = planID
+        self.error = error
+    }
+}
+
+// MARK: - Workspace Payloads
+
+public struct WorkspaceRequestPayload: Codable, Sendable {
+    public let workspaceID: String
+
+    public init(workspaceID: String) {
+        self.workspaceID = workspaceID
+    }
+}
+
+public struct WorkspaceResponsePayload: Codable, Sendable {
+    public let workspaceID: String
+    public let files: [String: String]
+    public let stateHash: Data
+
+    public init(workspaceID: String, files: [String: String], stateHash: Data) {
+        self.workspaceID = workspaceID
+        self.files = files
+        self.stateHash = stateHash
     }
 }
