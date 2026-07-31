@@ -609,3 +609,143 @@ public struct WorkspaceResponsePayload: Codable, Sendable {
         self.stateHash = stateHash
     }
 }
+
+// MARK: - Presence Payloads
+
+public struct PresenceRegisterPayload: Codable, Sendable {
+    public let nodeID: NodeID
+    public let displayName: String
+    public let host: String
+    public let port: UInt16
+    public let architecture: CPUArchitecture
+    public let capabilities: Set<FabricCapability>
+
+    public init(nodeID: NodeID, displayName: String, host: String, port: UInt16, architecture: CPUArchitecture, capabilities: Set<FabricCapability>) {
+        self.nodeID = nodeID
+        self.displayName = displayName
+        self.host = host
+        self.port = port
+        self.architecture = architecture
+        self.capabilities = capabilities
+    }
+}
+
+public struct PresenceDeregisterPayload: Codable, Sendable {
+    public let nodeID: NodeID
+
+    public init(nodeID: NodeID) {
+        self.nodeID = nodeID
+    }
+}
+
+public struct NodeListNodeIDs: Codable, Sendable {
+    public let nodeIDs: [NodeID]
+
+    public init(nodeIDs: [NodeID]) {
+        self.nodeIDs = nodeIDs
+    }
+}
+
+// MARK: - Rendezvous Payloads
+
+public struct RendezvousRequestPayload: Codable, Sendable {
+    public let consoleID: NodeID
+    public let targetNodeID: NodeID
+
+    public init(consoleID: NodeID, targetNodeID: NodeID) {
+        self.consoleID = consoleID
+        self.targetNodeID = targetNodeID
+    }
+}
+
+public struct RendezvousCancelPayload: Codable, Sendable {
+    public let requestID: UUID
+
+    public init(requestID: UUID) {
+        self.requestID = requestID
+    }
+}
+
+public struct RendezvousCompletePayload: Codable, Sendable {
+    public let requestID: UUID
+
+    public init(requestID: UUID) {
+        self.requestID = requestID
+    }
+}
+
+// MARK: - Signaling Payloads
+
+public struct SignalingOfferPayload: Codable, Sendable {
+    public let sessionID: UUID
+    public let fromNodeID: NodeID
+    public let toNodeID: NodeID
+    public let sdp: Data
+
+    public init(sessionID: UUID, fromNodeID: NodeID, toNodeID: NodeID, sdp: Data) {
+        self.sessionID = sessionID
+        self.fromNodeID = fromNodeID
+        self.toNodeID = toNodeID
+        self.sdp = sdp
+    }
+}
+
+public struct SignalingAnswerPayload: Codable, Sendable {
+    public let sessionID: UUID
+    public let fromNodeID: NodeID
+    public let toNodeID: NodeID
+    public let sdp: Data
+
+    public init(sessionID: UUID, fromNodeID: NodeID, toNodeID: NodeID, sdp: Data) {
+        self.sessionID = sessionID
+        self.fromNodeID = fromNodeID
+        self.toNodeID = toNodeID
+        self.sdp = sdp
+    }
+}
+
+public struct SignalingICECandidatePayload: Codable, Sendable {
+    public let sessionID: UUID
+    public let candidate: String
+    public let sdpMLineIndex: Int32
+    public let sdpMid: String?
+
+    public init(sessionID: UUID, candidate: String, sdpMLineIndex: Int32 = 0, sdpMid: String? = nil) {
+        self.sessionID = sessionID
+        self.candidate = candidate
+        self.sdpMLineIndex = sdpMLineIndex
+        self.sdpMid = sdpMid
+    }
+}
+
+// MARK: - Relay Payloads
+
+public struct RelayAllocatePayload: Codable, Sendable {
+    public let sourceNodeID: NodeID
+    public let targetNodeID: NodeID
+
+    public init(sourceNodeID: NodeID, targetNodeID: NodeID) {
+        self.sourceNodeID = sourceNodeID
+        self.targetNodeID = targetNodeID
+    }
+}
+
+public struct RelayForwardPayload: Codable, Sendable {
+    public let channelID: UUID
+    public let fromNodeID: NodeID
+    public let data: Data
+
+    public init(channelID: UUID, fromNodeID: NodeID, data: Data) {
+        self.channelID = channelID
+        self.fromNodeID = fromNodeID
+        self.data = data
+    }
+}
+
+public struct RelayReleasePayload: Codable, Sendable {
+    public let channelID: UUID
+
+    public init(channelID: UUID) {
+        self.channelID = channelID
+    }
+}

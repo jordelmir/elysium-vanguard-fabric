@@ -3,6 +3,7 @@
 .swiftpm/
 *.o
 *.dSYM/
+*.dSYM.zip
 
 # macOS
 .DS_Store
@@ -13,6 +14,20 @@ DerivedData/
 xcuserdata/
 *.xcworkspace
 *.xcodeproj
+*.playground
+*.xctestplan
+
+# App bundles
+*.app
+*.ipa
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.local
 
 # Temp
 /tmp/

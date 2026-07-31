@@ -13,6 +13,8 @@ public enum VanguardProtocolConstants {
     public static let maxFileChunk: Int = 4 * 1024 * 1024           // 4 MiB
     public static let protocolMajorVersion: UInt16 = 1
     public static let protocolMinorVersion: UInt16 = 0
+    public static let defaultNodePort: UInt16 = 49494
+    public static let defaultCoordinatorPort: UInt16 = 49495
 }
 
 // MARK: - Protocol Version Extensions

@@ -99,68 +99,117 @@ final class CoordinatorServerState: ObservableObject {
         let msgType = message.header.messageType
         switch msgType {
         case .presenceRegister:
-            await coordinator.registerNode(
-                nodeID: NodeID(),
-                displayName: "Remote Node",
-                endpoint: NodeEndpoint(host: "unknown", port: 0),
-                architecture: .arm64,
-                capabilities: []
-            )
+            if let payload = try? JSONDecoder().decode(PresenceRegisterPayload.self, from: message.payload) {
+                await coordinator.registerNode(
+                    nodeID: payload.nodeID,
+                    displayName: payload.displayName,
+                    endpoint: NodeEndpoint(host: payload.host, port: payload.port),
+                    architecture: payload.architecture,
+                    capabilities: payload.capabilities
+                )
+            }
         case .presenceDeregister:
-            break
+            if let payload = try? JSONDecoder().decode(PresenceDeregisterPayload.self, from: message.payload) {
+                await coordinator.deregisterNode(payload.nodeID)
+            }
         case .heartbeat:
             let response = OutboundMessage(
                 messageType: .heartbeatAck,
                 payload: Data()
             )
             try? await transport.send(response)
-        case .rendezvousRequest:
-            let request = try? await rendezvous.requestRendezvous(
-                consoleID: NodeID(),
-                targetNodeID: NodeID()
-            )
-            if request != nil {
+        case .presenceList:
+            let nodes = await coordinator.nodeList()
+            let nodeList = NodeListNodeIDs(nodeIDs: nodes.map { $0.nodeID })
+            if let data = try? JSONEncoder().encode(nodeList) {
                 let response = OutboundMessage(
-                    messageType: .rendezvousRequest,
+                    messageType: .presenceList,
+                    payload: data
+                )
+                try? await transport.send(response)
+            }
+        case .rendezvousRequest:
+            if let payload = try? JSONDecoder().decode(RendezvousRequestPayload.self, from: message.payload) {
+                let request = try? await rendezvous.requestRendezvous(
+                    consoleID: payload.consoleID,
+                    targetNodeID: payload.targetNodeID
+                )
+                if request != nil {
+                    let response = OutboundMessage(
+                        messageType: .rendezvousRequest,
+                        payload: message.payload
+                    )
+                    try? await transport.send(response)
+                }
+            }
+        case .rendezvousCancel:
+            if let payload = try? JSONDecoder().decode(RendezvousCancelPayload.self, from: message.payload) {
+                await rendezvous.cancelRendezvous(requestID: payload.requestID)
+            }
+        case .rendezvousComplete:
+            if let payload = try? JSONDecoder().decode(RendezvousCompletePayload.self, from: message.payload) {
+                _ = await rendezvous.completeRendezvous(requestID: payload.requestID)
+            }
+        case .signalingOffer:
+            if let payload = try? JSONDecoder().decode(SignalingOfferPayload.self, from: message.payload) {
+                _ = await signaling.createOffer(
+                    SignalingOffer(
+                        sessionID: payload.sessionID,
+                        fromNodeID: payload.fromNodeID,
+                        toNodeID: payload.toNodeID,
+                        sdp: payload.sdp
+                    )
+                )
+                let response = OutboundMessage(
+                    messageType: .signalingOffer,
                     payload: message.payload
                 )
                 try? await transport.send(response)
             }
-        case .rendezvousCancel:
-            await rendezvous.cancelRendezvous(requestID: UUID())
-        case .signalingOffer:
-            let session = await signaling.createOffer(
-                SignalingOffer(
-                    sessionID: UUID(),
-                    fromNodeID: NodeID(),
-                    toNodeID: NodeID(),
-                    sdp: message.payload
-                )
-            )
-            let response = OutboundMessage(
-                messageType: .signalingOffer,
-                payload: message.payload
-            )
-            try? await transport.send(response)
         case .signalingAnswer:
-            _ = await signaling.receiveAnswer(
-                SignalingAnswer(
-                    sessionID: UUID(),
-                    fromNodeID: NodeID(),
-                    toNodeID: NodeID(),
-                    sdp: message.payload
+            if let payload = try? JSONDecoder().decode(SignalingAnswerPayload.self, from: message.payload) {
+                _ = await signaling.receiveAnswer(
+                    SignalingAnswer(
+                        sessionID: payload.sessionID,
+                        fromNodeID: payload.fromNodeID,
+                        toNodeID: payload.toNodeID,
+                        sdp: payload.sdp
+                    )
                 )
-            )
+            }
+        case .signalingIceCandidate:
+            if let payload = try? JSONDecoder().decode(SignalingICECandidatePayload.self, from: message.payload) {
+                let candidate = ICECandidate(
+                    candidate: payload.candidate,
+                    sdpMLineIndex: payload.sdpMLineIndex,
+                    sdpMid: payload.sdpMid
+                )
+                await signaling.addICECandidate(candidate, toSession: payload.sessionID)
+            }
         case .relayAllocate:
-            let channel = await relay.allocateChannel(
-                sourceNodeID: NodeID(),
-                targetNodeID: NodeID()
-            )
-            let response = OutboundMessage(
-                messageType: .relayAllocate,
-                payload: message.payload
-            )
-            try? await transport.send(response)
+            if let payload = try? JSONDecoder().decode(RelayAllocatePayload.self, from: message.payload) {
+                let channel = await relay.allocateChannel(
+                    sourceNodeID: payload.sourceNodeID,
+                    targetNodeID: payload.targetNodeID
+                )
+                let response = OutboundMessage(
+                    messageType: .relayAllocate,
+                    payload: message.payload
+                )
+                try? await transport.send(response)
+            }
+        case .relayForward:
+            if let payload = try? JSONDecoder().decode(RelayForwardPayload.self, from: message.payload) {
+                _ = await relay.forwardPacket(
+                    channelID: payload.channelID,
+                    data: payload.data,
+                    from: payload.fromNodeID
+                )
+            }
+        case .relayRelease:
+            if let payload = try? JSONDecoder().decode(RelayReleasePayload.self, from: message.payload) {
+                await relay.releaseChannel(payload.channelID)
+            }
         default:
             os_log(.debug, "Coordinator ignoring message type: 0x%04X", message.header.messageType.rawValue)
         }

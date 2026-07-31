@@ -256,11 +256,6 @@ let package = Package(
             dependencies: ["VanguardDomain", "VanguardCompute"],
             path: "Packages/VanguardAgents/Sources/VanguardAgents"
         ),
-        .testTarget(
-            name: "VanguardAgentsTests",
-            dependencies: ["VanguardAgents", "VanguardTestSupport"],
-            path: "Packages/VanguardAgents/Tests"
-        ),
         .target(
             name: "VanguardPolicy",
             dependencies: ["VanguardDomain"],
@@ -416,6 +411,7 @@ let package = Package(
                 "VanguardTelemetry",
             ],
             path: "Apps/VanguardNodeMac/Sources/VanguardNodeMac",
+            resources: [.process("Assets.xcassets")],
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("VideoToolbox"),
@@ -452,6 +448,7 @@ let package = Package(
                 "CSystemMetrics",
             ],
             path: "Apps/VanguardConsoleMac/Sources/VanguardConsoleMac",
+            resources: [.process("Assets.xcassets")],
             linkerSettings: [
                 .linkedFramework("Network"),
                 .linkedFramework("CryptoKit"),

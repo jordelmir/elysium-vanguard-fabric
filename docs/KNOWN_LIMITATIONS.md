@@ -23,18 +23,22 @@
 - Local Network permission on both devices
 
 ### Not Implemented in v0.1
-- Cloud relay / Internet access
+- Cloud relay / Internet access (STUN client implemented, full TURN relay planned)
 - Online login
 - Billing
 - Team/RBAC
 - Windows/Linux/Android nodes
 - Virtualization
 - Marketplace/plugins
-- Autonomous agents
-- Distributed scheduler
-- File transfer (contracts only, not functional)
-- Clipboard sync (contracts only)
-- Audio streaming
+- Autonomous agents (DAG pipeline implemented, full autonomy planned)
+- Distributed scheduler (single-node scheduler implemented, multi-node planned)
+
+### Implemented in v0.1 (contracts + functional)
+- File transfer — chunked transfer with SHA-256 verification and resume (VanguardFiles)
+- Clipboard sync — NSPasteboard polling, change detection, bidirectional (VanguardClipboard)
+- Audio streaming — ScreenCaptureKit audio capture (VanguardAudio)
+- NAT traversal — STUN client (RFC 5389), NATType detection, ConnectionRouteNegotiator
+- Relay transport — RelayConfiguration, RelaySession, connectViaRelay()
 
 ### Hardware Constraints
 - MacBook Pro 2016: Maximum macOS Monterey (12.x)
@@ -43,10 +47,9 @@
 - Metal rendering requires compatible GPU
 
 ### Network Constraints
-- LAN only in v0.1
-- No Internet relay
-- No port forwarding
-- No NAT traversal
+- LAN only in v0.1 (STUN/NAT traversal available for direct connection)
+- No TURN relay server deployed (code exists, server infrastructure planned)
+- No port forwarding automation
 
 ### Security Constraints
 - No custom cryptography

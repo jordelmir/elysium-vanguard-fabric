@@ -20,7 +20,6 @@ public final class InMemoryAuditLogService: AuditLogService, @unchecked Sendable
     ) async throws {
         lock.withLock {
             sequenceCounter += 1
-            let placeholderHash = Data(SHA256.hash(data: Data("pending".utf8)))
             var entry = AuditEntry(
                 entryID: UUID(),
                 previousHash: previousHash,
@@ -32,7 +31,7 @@ public final class InMemoryAuditLogService: AuditLogService, @unchecked Sendable
                 action: action,
                 decision: decision,
                 result: result,
-                entryHash: placeholderHash
+                entryHash: Data()
             )
             if let entryData = try? JSONEncoder().encode(entry) {
                 let realHash = Data(SHA256.hash(data: entryData))
