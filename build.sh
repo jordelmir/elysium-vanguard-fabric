@@ -41,6 +41,45 @@ echo ""
 echo "✅ All targets built successfully"
 echo ""
 
+# Generate .icns from AppIcon.appiconset PNGs
+generate_icns() {
+    local product_name="$1"
+    local iconset_src="$PROJECT_DIR/Apps/$product_name/Sources/$product_name/Assets.xcassets/AppIcon.appiconset"
+    local iconset_dir="$BUILD_DIR/$product_name.iconset"
+    local icns_output="$BUILD_DIR/$product_name.icns"
+
+    if [ ! -d "$iconset_src" ]; then
+        echo "⚠️  No icon source for $product_name, skipping .icns generation"
+        return 1
+    fi
+
+    rm -rf "$iconset_dir"
+    mkdir -p "$iconset_dir"
+
+    # Map AppIcon.appiconset PNGs to .iconset naming convention
+    cp "$iconset_src/icon_16x16.png"     "$iconset_dir/icon_16x16.png"
+    cp "$iconset_src/icon_32x32.png"     "$iconset_dir/icon_16x16@2x.png"
+    cp "$iconset_src/icon_32x32.png"     "$iconset_dir/icon_32x32.png"
+    cp "$iconset_src/icon_64x64.png"     "$iconset_dir/icon_32x32@2x.png"
+    cp "$iconset_src/icon_128x128.png"   "$iconset_dir/icon_128x128.png"
+    cp "$iconset_src/icon_256x256.png"   "$iconset_dir/icon_128x128@2x.png"
+    cp "$iconset_src/icon_256x256.png"   "$iconset_dir/icon_256x256.png"
+    cp "$iconset_src/icon_512x512.png"   "$iconset_dir/icon_256x256@2x.png"
+    cp "$iconset_src/icon_512x512.png"   "$iconset_dir/icon_512x512.png"
+    cp "$iconset_src/icon_1024x1024.png" "$iconset_dir/icon_512x512@2x.png"
+
+    iconutil -c icns "$iconset_dir" -o "$icns_output"
+    rm -rf "$iconset_dir"
+
+    echo "   ✅ Generated $(basename "$icns_output") ($(du -h "$icns_output" | cut -f1))"
+}
+
+echo "🎨 Generating app icons..."
+generate_icns "VanguardNodeMac"
+generate_icns "VanguardConsoleMac"
+generate_icns "VanguardCoordinatorServer"
+echo ""
+
 # Create app bundles
 create_app_bundle() {
     local product_name="$1"
@@ -68,10 +107,17 @@ create_app_bundle() {
     # Copy entitlements (for code signing reference)
     cp "$entitlements" "$bundle_dir/$product_name.entitlements"
 
-    # Copy assets
-    local assets_source="$PROJECT_DIR/Apps/$product_name/Sources/$product_name/Assets.xcassets"
-    if [ -d "$assets_source" ]; then
-        cp -R "$assets_source" "$resources_dir/Assets.xcassets"
+    # Copy compiled .icns icon
+    local icns_file="$BUILD_DIR/$product_name.icns"
+    if [ -f "$icns_file" ]; then
+        cp "$icns_file" "$resources_dir/AppIcon.icns"
+        echo "   🎨 AppIcon.icns installed"
+    else
+        # Fallback: copy raw Assets.xcassets
+        local assets_source="$PROJECT_DIR/Apps/$product_name/Sources/$product_name/Assets.xcassets"
+        if [ -d "$assets_source" ]; then
+            cp -R "$assets_source" "$resources_dir/Assets.xcassets"
+        fi
     fi
 
     # Create PkgInfo

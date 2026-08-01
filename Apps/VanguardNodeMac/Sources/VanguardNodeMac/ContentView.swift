@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var animateGlow = false
     @State private var screenRecordingGranted = false
     @State private var accessibilityGranted = false
+    @State private var permissionPollingTask: Task<Void, Never>?
 
     var body: some View {
         CosmicBackground(baseColor: DS.Colors.accent, particleCount: 40)
@@ -60,10 +61,40 @@ struct ContentView: View {
                     animateGlow = true
                 }
                 refreshPermissionStates()
+                startPermissionPolling()
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 refreshPermissionStates()
             }
+            .onDisappear {
+                permissionPollingTask?.cancel()
+            }
+    }
+
+    private func startPermissionPolling() {
+        permissionPollingTask?.cancel()
+        permissionPollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { break }
+                let service = MacOSPermissionService()
+                let sr = await service.checkPermission(kind: .screenRecording)
+                let ac = await service.checkPermission(kind: .accessibility)
+                let newSR = sr.isGranted
+                let newAC = ac.isGranted
+                let changed = (newSR != screenRecordingGranted) || (newAC != accessibilityGranted)
+                await MainActor.run {
+                    withAnimation { screenRecordingGranted = newSR }
+                    withAnimation { accessibilityGranted = newAC }
+                }
+                if changed {
+                    await state.checkPermissions()
+                }
+                if newSR && newAC {
+                    break
+                }
+            }
+        }
     }
 
     private func refreshPermissionStates() {
