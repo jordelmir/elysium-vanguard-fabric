@@ -8,23 +8,28 @@ import VanguardDomain
 
 public final class MacOSPermissionService: PermissionService, @unchecked Sendable {
     private static let cacheKey = "com.elysiumvanguard.permissions.granted"
-    @MainActor private static let defaults = UserDefaults.standard
+    private static let lock = NSLock()
+    private static nonisolated(unsafe) var _grantedKinds: Set<String> = {
+        let arr = UserDefaults.standard.object(forKey: cacheKey) as? [String] ?? []
+        return Set(arr)
+    }()
 
     public init() {}
 
     // MARK: - Cache
 
     private static func cachedGrants() -> Set<String> {
-        let arr = MainActor.assumeIsolated { defaults.object(forKey: cacheKey) as? [String] }
-        return Set(arr ?? [])
+        lock.lock()
+        defer { lock.unlock() }
+        return _grantedKinds
     }
 
     private static func cacheGrant(_ kind: PermissionKind) {
-        MainActor.assumeIsolated {
-            var grants = cachedGrants()
-            grants.insert(kind.rawValue)
-            defaults.set(Array(grants), forKey: cacheKey)
-        }
+        lock.lock()
+        _grantedKinds.insert(kind.rawValue)
+        let arr = Array(_grantedKinds)
+        lock.unlock()
+        UserDefaults.standard.set(arr, forKey: cacheKey)
     }
 
     private static func isCached(_ kind: PermissionKind) -> Bool {

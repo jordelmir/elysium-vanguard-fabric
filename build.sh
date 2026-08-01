@@ -104,20 +104,11 @@ create_app_bundle() {
     # Copy Info.plist
     cp "$plist_source" "$contents_dir/Info.plist"
 
-    # Copy entitlements (for code signing reference)
-    cp "$entitlements" "$bundle_dir/$product_name.entitlements"
-
-    # Copy compiled .icns icon
+    # Copy compiled .icns icon (required for code signing)
     local icns_file="$BUILD_DIR/$product_name.icns"
     if [ -f "$icns_file" ]; then
         cp "$icns_file" "$resources_dir/AppIcon.icns"
         echo "   🎨 AppIcon.icns installed"
-    else
-        # Fallback: copy raw Assets.xcassets
-        local assets_source="$PROJECT_DIR/Apps/$product_name/Sources/$product_name/Assets.xcassets"
-        if [ -d "$assets_source" ]; then
-            cp -R "$assets_source" "$resources_dir/Assets.xcassets"
-        fi
     fi
 
     # Create PkgInfo
@@ -143,17 +134,11 @@ echo ""
 sign_bundle() {
     local app_path="$1"
     local entitlements="$2"
-    local marker="$BUILD_DIR/.$(basename "$app_path").signed"
 
-    if [ "${SIGN:-0}" = "1" ] || [ ! -f "$marker" ]; then
-        echo "🔐 Signing $(basename "$app_path")..."
-        codesign --force --deep --sign - --entitlements "$entitlements" "$app_path" || true
-        codesign --verify --deep --strict --verbose=2 "$app_path" || true
-        touch "$marker"
-        echo "   ✅ Signed"
-    else
-        echo "⏭️  Skipping sign for $(basename "$app_path") (use SIGN=1 to force)"
-    fi
+    echo "🔐 Signing $(basename "$app_path")..."
+    codesign --force --deep --sign - --entitlements "$entitlements" "$app_path" || true
+    codesign --verify --deep --strict --verbose=2 "$app_path" || true
+    echo "   ✅ Signed"
 }
 
 sign_bundle "$BUILD_DIR/VanguardNodeMac.app" \
