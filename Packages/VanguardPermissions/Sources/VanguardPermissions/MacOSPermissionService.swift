@@ -7,7 +7,31 @@ import VanguardDomain
 // MARK: - macOS Permission Service
 
 public final class MacOSPermissionService: PermissionService, @unchecked Sendable {
+    private static let cacheKey = "com.elysiumvanguard.permissions.granted"
+    @MainActor private static let defaults = UserDefaults.standard
+
     public init() {}
+
+    // MARK: - Cache
+
+    private static func cachedGrants() -> Set<String> {
+        let arr = MainActor.assumeIsolated { defaults.object(forKey: cacheKey) as? [String] }
+        return Set(arr ?? [])
+    }
+
+    private static func cacheGrant(_ kind: PermissionKind) {
+        MainActor.assumeIsolated {
+            var grants = cachedGrants()
+            grants.insert(kind.rawValue)
+            defaults.set(Array(grants), forKey: cacheKey)
+        }
+    }
+
+    private static func isCached(_ kind: PermissionKind) -> Bool {
+        cachedGrants().contains(kind.rawValue)
+    }
+
+    // MARK: - Check
 
     public func checkAllPermissions() async -> [PermissionDescriptor] {
         var descriptors: [PermissionDescriptor] = []
@@ -24,6 +48,21 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
     }
 
     public func checkPermission(kind: PermissionKind) async -> PermissionState {
+        let systemState = checkSystemPermission(kind: kind)
+
+        if systemState.isGranted {
+            Self.cacheGrant(kind)
+            return .granted
+        }
+
+        if Self.isCached(kind) {
+            return .granted
+        }
+
+        return systemState
+    }
+
+    private func checkSystemPermission(kind: PermissionKind) -> PermissionState {
         switch kind {
         case .screenRecording:
             return CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
@@ -42,13 +81,19 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
         }
     }
 
+    // MARK: - Request
+
     public func requestPermission(kind: PermissionKind) async -> PermissionState {
         switch kind {
         case .screenRecording:
-            return CGRequestScreenCaptureAccess() ? .granted : .denied
+            let granted = CGRequestScreenCaptureAccess()
+            if granted { Self.cacheGrant(kind) }
+            return granted ? .granted : .denied
 
         case .accessibility:
-            return Self.requestAccessibilityTrust()
+            let result = Self.requestAccessibilityTrust()
+            if result.isGranted { Self.cacheGrant(kind) }
+            return result
 
         case .localNetwork:
             return .granted
@@ -57,6 +102,7 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
             if #available(macOS 13.0, *) {
                 do {
                     try ServiceManagement.SMAppService.mainApp.register()
+                    Self.cacheGrant(kind)
                     return .granted
                 } catch {
                     return .denied
@@ -71,6 +117,8 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
         let options = [key: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options) ? .granted : .denied
     }
+
+    // MARK: - Settings
 
     public func openSystemSettings(for kind: PermissionKind) async {
         let urlString: String

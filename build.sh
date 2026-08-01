@@ -144,10 +144,14 @@ sign_bundle() {
     local app_path="$1"
     local entitlements="$2"
 
-    echo "🔐 Signing $(basename "$app_path")..."
-    codesign --force --deep --sign - --entitlements "$entitlements" "$app_path"
-    codesign --verify --deep --strict --verbose=2 "$app_path"
-    echo "   ✅ Signed"
+    if [ "${SIGN:-0}" = "1" ] || [ ! -d "$app_path/Contents/_CodeSignature" ]; then
+        echo "🔐 Signing $(basename "$app_path")..."
+        codesign --force --deep --sign - --entitlements "$entitlements" "$app_path"
+        codesign --verify --deep --strict --verbose=2 "$app_path"
+        echo "   ✅ Signed"
+    else
+        echo "⏭️  Skipping sign for $(basename "$app_path") (use SIGN=1 to force)"
+    fi
 }
 
 sign_bundle "$BUILD_DIR/VanguardNodeMac.app" \
