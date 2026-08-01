@@ -2,6 +2,7 @@ import Foundation
 import os
 import CryptoKit
 import VanguardDomain
+import VanguardProtocol
 
 public protocol ArtifactStore: Sendable {
     func saveManifest(_ manifest: ArtifactManifest) async throws
@@ -14,12 +15,85 @@ public protocol ArtifactStore: Sendable {
     func isComplete(artifactID: ArtifactID) async -> Bool
 }
 
+public protocol ArtifactTransport: Sendable {
+    func send(_ message: OutboundMessage) async throws
+}
+
 public actor ArtifactTransferService {
     private let store: ArtifactStore
+    private var transport: ArtifactTransport?
     private let logger = Logger(subsystem: "ElysiumVanguard", category: "Artifacts")
 
     public init(store: ArtifactStore) {
         self.store = store
+    }
+
+    public func setTransport(_ transport: ArtifactTransport) {
+        self.transport = transport
+    }
+
+    public func sendManifest(_ manifest: ArtifactManifest) async throws {
+        guard let transport else {
+            throw ArtifactTransferError.noTransport
+        }
+        let payload = ArtifactManifestPayload(
+            artifactID: manifest.artifactID.rawValue.uuidString,
+            name: manifest.name,
+            version: manifest.version,
+            chunkSize: manifest.chunkSize,
+            totalSize: manifest.totalSize,
+            sha256Hash: manifest.sha256Hash.hexString,
+            chunkHashes: manifest.chunkHashes.map { $0.hexString },
+            metadata: manifest.metadata
+        )
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .artifactManifest, payload: data)
+        try await transport.send(message)
+        logger.info("Sent manifest: \(manifest.name) v\(manifest.version)")
+    }
+
+    public func sendChunk(_ chunk: ArtifactChunk, via transport: ArtifactTransport) async throws {
+        let payload = ArtifactChunkPayload(
+            artifactID: chunk.artifactID.rawValue.uuidString,
+            index: chunk.index,
+            dataBase64: chunk.data.base64EncodedString(),
+            sha256Hash: chunk.sha256Hash.hexString
+        )
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .artifactChunk, payload: data)
+        try await transport.send(message)
+        logger.debug("Sent chunk \(chunk.index)")
+    }
+
+    public func requestArtifact(artifactID: ArtifactID, via transport: ArtifactTransport) async throws {
+        let payload = ArtifactRequestPayload(
+            artifactID: artifactID.rawValue.uuidString,
+            chunkIndices: nil
+        )
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .artifactRequest, payload: data)
+        try await transport.send(message)
+        logger.info("Requested artifact: \(artifactID.rawValue)")
+    }
+
+    public func sendAllChunks(artifactID: ArtifactID, via transport: ArtifactTransport) async throws {
+        guard let manifest = await store.getManifest(artifactID: artifactID) else {
+            throw ArtifactTransferError.manifestNotFound(artifactID)
+        }
+        try await sendManifest(manifest)
+        for i in 0..<manifest.chunkCount {
+            guard let chunkData = await store.getChunk(artifactID: artifactID, index: i) else {
+                throw ArtifactTransferError.chunkMissing(index: i)
+            }
+            let chunk = ArtifactChunk(
+                artifactID: artifactID,
+                index: i,
+                data: chunkData,
+                sha256Hash: manifest.chunkHashes[i]
+            )
+            try await sendChunk(chunk, via: transport)
+        }
+        logger.info("Sent all \(manifest.chunkCount) chunks for \(manifest.name)")
     }
 
     public func receiveManifest(_ manifest: ArtifactManifest) async throws {

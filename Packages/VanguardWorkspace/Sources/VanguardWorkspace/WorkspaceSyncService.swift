@@ -2,6 +2,11 @@ import Foundation
 import CryptoKit
 import os.log
 import VanguardDomain
+import VanguardProtocol
+
+public protocol WorkspaceTransport: Sendable {
+    func send(_ message: OutboundMessage) async throws
+}
 
 public enum ConflictResolution: String, Sendable, Codable {
     case newestWins
@@ -85,9 +90,14 @@ public struct SyncConflict: Sendable, Codable, Identifiable {
 public actor WorkspaceSyncService {
     private var syncStates: [WorkspaceID: SyncState] = [:]
     private var conflictResolution: ConflictResolution = .newestWins
+    private var transport: WorkspaceTransport?
     private let logger = Logger(subsystem: "ElysiumVanguard", category: "WorkspaceSync")
 
     public init() {}
+
+    public func setTransport(_ transport: WorkspaceTransport) {
+        self.transport = transport
+    }
 
     public func setConflictResolution(_ resolution: ConflictResolution) {
         conflictResolution = resolution
@@ -217,5 +227,51 @@ public actor WorkspaceSyncService {
 
     public func deleteSyncState(workspaceID: WorkspaceID) {
         syncStates.removeValue(forKey: workspaceID)
+    }
+
+    public func sendWorkspaceRequest(workspaceID: WorkspaceID) async throws {
+        guard let transport else { return }
+        let payload = WorkspaceRequestPayload(workspaceID: workspaceID.rawValue.uuidString)
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .workspaceRequest, payload: data)
+        try await transport.send(message)
+        logger.info("Sent workspace request: \(workspaceID.rawValue)")
+    }
+
+    public func sendWorkspaceResponse(workspaceID: WorkspaceID, files: [String: String], stateHash: Data) async throws {
+        guard let transport else { return }
+        let payload = WorkspaceResponsePayload(
+            workspaceID: workspaceID.rawValue.uuidString,
+            files: files,
+            stateHash: stateHash
+        )
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .workspaceResponse, payload: data)
+        try await transport.send(message)
+        logger.info("Sent workspace response: \(workspaceID.rawValue)")
+    }
+
+    public func sendFileContents(workspaceID: WorkspaceID, filePath: String, content: Data) async throws {
+        guard let transport else { return }
+        let payload = WorkspaceFilePayload(
+            workspaceID: workspaceID.rawValue.uuidString,
+            filePath: filePath,
+            contentBase64: content.base64EncodedString(),
+            sha256: sha256(content).hexString
+        )
+        let data = try JSONEncoder().encode(payload)
+        let message = OutboundMessage(messageType: .workspaceChangeSet, payload: data)
+        try await transport.send(message)
+        logger.debug("Sent file: \(filePath)")
+    }
+
+    private func sha256(_ data: Data) -> Data {
+        Data(SHA256.hash(data: data))
+    }
+}
+
+extension Data {
+    var hexString: String {
+        map { String(format: "%02x", $0) }.joined()
     }
 }

@@ -94,4 +94,44 @@ final class ProtocolMessagesTests: XCTestCase {
         let decoded = try JSONDecoder().decode(CapabilityRequestPayload.self, from: data)
         XCTAssertEqual(payload.capabilities, decoded.capabilities)
     }
+
+    func testSwitchDisplayPayloadCodable() throws {
+        let payload = SwitchDisplayPayload(displayID: 42)
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(SwitchDisplayPayload.self, from: data)
+        XCTAssertEqual(payload.displayID, decoded.displayID)
+    }
+
+    func testSwitchWindowPayloadCodable() throws {
+        let payload = SwitchWindowPayload(windowID: 123, applicationName: "com.apple.Xcode")
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(SwitchWindowPayload.self, from: data)
+        XCTAssertEqual(payload.windowID, decoded.windowID)
+        XCTAssertEqual(payload.applicationName, decoded.applicationName)
+    }
+
+    func testDisplayListPayloadCodable() throws {
+        let displays = [
+            DisplayDescriptorPayload(displayID: 1, name: "Built-in", width: 1920, height: 1080, isMain: true, isBuiltIn: true),
+            DisplayDescriptorPayload(displayID: 2, name: "External", width: 2560, height: 1440, isMain: false, isBuiltIn: false)
+        ]
+        let payload = DisplayListPayload(displays: displays)
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(DisplayListPayload.self, from: data)
+        XCTAssertEqual(decoded.displays.count, 2)
+        XCTAssertEqual(decoded.displays[0].name, "Built-in")
+        XCTAssertEqual(decoded.displays[1].displayID, 2)
+    }
+
+    func testWindowListPayloadCodable() throws {
+        let windows = [
+            WindowDescriptorPayload(windowID: 10, applicationName: "com.apple.Terminal", title: "zsh", x: 0, y: 0, width: 800, height: 600, isOnScreen: true)
+        ]
+        let payload = WindowListPayload(windows: windows)
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(WindowListPayload.self, from: data)
+        XCTAssertEqual(decoded.windows.count, 1)
+        XCTAssertEqual(decoded.windows[0].title, "zsh")
+        XCTAssertTrue(decoded.windows[0].isOnScreen)
+    }
 }

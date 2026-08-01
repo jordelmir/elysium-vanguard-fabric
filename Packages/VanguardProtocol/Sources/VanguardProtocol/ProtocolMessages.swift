@@ -390,6 +390,82 @@ public struct TelemetrySnapshotPayload: Codable, Sendable {
     }
 }
 
+// MARK: - Display/Window Switching Payloads
+
+public struct SwitchDisplayPayload: Codable, Sendable {
+    public let displayID: UInt32
+
+    public init(displayID: UInt32) {
+        self.displayID = displayID
+    }
+}
+
+public struct SwitchWindowPayload: Codable, Sendable {
+    public let windowID: UInt32
+    public let applicationName: String?
+
+    public init(windowID: UInt32, applicationName: String? = nil) {
+        self.windowID = windowID
+        self.applicationName = applicationName
+    }
+}
+
+public struct DisplayListPayload: Codable, Sendable {
+    public let displays: [DisplayDescriptorPayload]
+
+    public init(displays: [DisplayDescriptorPayload]) {
+        self.displays = displays
+    }
+}
+
+public struct DisplayDescriptorPayload: Codable, Sendable {
+    public let displayID: UInt32
+    public let name: String
+    public let width: Int
+    public let height: Int
+    public let isMain: Bool
+    public let isBuiltIn: Bool
+
+    public init(displayID: UInt32, name: String, width: Int, height: Int, isMain: Bool, isBuiltIn: Bool) {
+        self.displayID = displayID
+        self.name = name
+        self.width = width
+        self.height = height
+        self.isMain = isMain
+        self.isBuiltIn = isBuiltIn
+    }
+}
+
+public struct WindowListPayload: Codable, Sendable {
+    public let windows: [WindowDescriptorPayload]
+
+    public init(windows: [WindowDescriptorPayload]) {
+        self.windows = windows
+    }
+}
+
+public struct WindowDescriptorPayload: Codable, Sendable {
+    public let windowID: UInt32
+    public let applicationName: String
+    public let title: String
+    public let x: Int
+    public let y: Int
+    public let width: Int
+    public let height: Int
+    public let isOnScreen: Bool
+
+    public init(windowID: UInt32, applicationName: String, title: String, x: Int, y: Int, width: Int, height: Int, isOnScreen: Bool) {
+        self.windowID = windowID
+        self.applicationName = applicationName
+        self.title = title
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.isOnScreen = isOnScreen
+    }
+}
+
 // MARK: - Job Payloads
 
 public struct JobSubmitPayload: Codable, Sendable {
@@ -607,6 +683,20 @@ public struct WorkspaceResponsePayload: Codable, Sendable {
         self.workspaceID = workspaceID
         self.files = files
         self.stateHash = stateHash
+    }
+}
+
+public struct WorkspaceFilePayload: Codable, Sendable {
+    public let workspaceID: String
+    public let filePath: String
+    public let contentBase64: String
+    public let sha256: String
+
+    public init(workspaceID: String, filePath: String, contentBase64: String, sha256: String) {
+        self.workspaceID = workspaceID
+        self.filePath = filePath
+        self.contentBase64 = contentBase64
+        self.sha256 = sha256
     }
 }
 

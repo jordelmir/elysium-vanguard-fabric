@@ -239,6 +239,52 @@ public actor AgentPipeline {
         stepResults[result.stepID] = result
     }
 
+    public func compileJobs(from plan: AgentPlan) -> [UUID: JobSpec] {
+        var jobs: [UUID: JobSpec] = [:]
+        let readyStepIDs = plan.steps.filter { step in step.dependencies.allSatisfy { dep in stepResults[dep] != nil } }.map(\.stepID)
+
+        for step in plan.steps where readyStepIDs.contains(step.stepID) {
+            guard let job = compileSingleJob(step: step, planID: plan.planID) else { continue }
+            jobs[step.stepID] = job
+        }
+        return jobs
+    }
+
+    private func compileSingleJob(step: AgentPlanStep, planID: UUID) -> JobSpec? {
+        let executable: String
+        let arguments: [String]
+
+        switch step.action {
+        case .runCommand(let commandParts):
+            guard let exe = commandParts.first else { return nil }
+            executable = exe
+            arguments = Array(commandParts.dropFirst())
+        case .submitJob(let commandLine):
+            let parts = commandLine.split(separator: " ").map(String.init)
+            guard let exe = parts.first else { return nil }
+            executable = exe
+            arguments = Array(parts.dropFirst())
+        case .scheduleJob(let commandLine, _):
+            let parts = commandLine.split(separator: " ").map(String.init)
+            guard let exe = parts.first else { return nil }
+            executable = exe
+            arguments = Array(parts.dropFirst())
+        default:
+            return nil
+        }
+
+        return JobSpec(
+            jobID: UUID(),
+            submittedBy: planID,
+            name: step.description,
+            executor: .nativeProcess,
+            command: ExecutableCommand(executable: executable, arguments: arguments),
+            timeoutSeconds: UInt64(step.timeoutSeconds),
+            priority: step.retryCount > 0 ? .high : .normal,
+            dependencies: step.dependencies
+        )
+    }
+
     // MARK: - DAG Validation
 
     private func hasCycle(steps: [AgentPlanStep]) -> Bool {

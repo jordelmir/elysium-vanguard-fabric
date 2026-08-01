@@ -597,6 +597,67 @@ No payload.
 
 ---
 
+## Multi-Display Messages
+
+### switchDisplay (0x0070)
+
+Console requests Node to switch to a specific display.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| displayID | u32 | Target display identifier |
+
+### switchWindow (0x0071)
+
+Console requests Node to switch to a specific window.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| windowID | u32 | Target window identifier |
+| applicationName | string? | Optional application bundle ID |
+
+### displayList (0x0072)
+
+Node sends available display list to Console.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| displays | [DisplayDescriptor] | Array of display descriptors |
+
+DisplayDescriptor:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| displayID | u32 | Display identifier |
+| name | string | Display name |
+| width | i32 | Width in pixels |
+| height | i32 | Height in pixels |
+| isMain | bool | Whether this is the main display |
+| isBuiltIn | bool | Whether this is a built-in display |
+
+### windowList (0x0073)
+
+Node sends available window list to Console.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| windows | [WindowDescriptor] | Array of window descriptors |
+
+WindowDescriptor:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| windowID | u32 | Window identifier |
+| applicationName | string | Application bundle ID |
+| title | string | Window title |
+| x | i32 | X position |
+| y | i32 | Y position |
+| width | i32 | Width in pixels |
+| height | i32 | Height in pixels |
+| isOnScreen | bool | Whether window is visible |
+
+---
+
 ## Presence Messages
 
 ### presenceRegister (0x0B00)

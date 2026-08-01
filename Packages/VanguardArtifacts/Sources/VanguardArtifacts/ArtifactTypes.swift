@@ -65,6 +65,7 @@ public enum ArtifactTransferError: Error, Sendable {
     case writeFailed(String)
     case chunkMissing(index: Int)
     case invalidChunkSize(Int)
+    case noTransport
 }
 
 extension ArtifactTransferError: CustomStringConvertible {
@@ -77,6 +78,13 @@ extension ArtifactTransferError: CustomStringConvertible {
         case .writeFailed(let reason): return "Write failed: \(reason)"
         case .chunkMissing(let index): return "Chunk \(index) missing"
         case .invalidChunkSize(let size): return "Invalid chunk size: \(size)"
+        case .noTransport: return "No transport available"
         }
+    }
+}
+
+extension Data {
+    var hexString: String {
+        map { String(format: "%02x", $0) }.joined()
     }
 }

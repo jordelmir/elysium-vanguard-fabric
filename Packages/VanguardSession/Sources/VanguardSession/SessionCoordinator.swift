@@ -322,6 +322,18 @@ public actor NodeSessionCoordinator {
             AppLogger.warning(.node, "Emergency stop received from console")
             await inputService.releaseAllKeys()
             stopCapture()
+        case .switchDisplay:
+            if let payload = try? JSONDecoder().decode(SwitchDisplayPayload.self, from: message.payload) {
+                await switchToDisplay(payload.displayID)
+            }
+        case .switchWindow:
+            if let payload = try? JSONDecoder().decode(SwitchWindowPayload.self, from: message.payload) {
+                await switchToWindow(payload.windowID, applicationName: payload.applicationName)
+            }
+        case .displayList:
+            await sendDisplayList()
+        case .windowList:
+            await sendWindowList()
         case .agentSubmit:
             await handleAgentSubmit(message)
         case .workspaceRequest:
@@ -753,7 +765,7 @@ public actor NodeSessionCoordinator {
         }
     }
 
-    public func switchToWindow(_ windowID: UInt32) async {
+    public func switchToWindow(_ windowID: UInt32, applicationName: String? = nil) async {
         stopCapture()
         let config = CaptureConfiguration(maxWidth: 1280, maxHeight: 720, fps: 30)
         captureTask = Task { [weak self] in
@@ -874,6 +886,52 @@ public actor NodeSessionCoordinator {
 
     public func getAvailableDisplays() async throws -> [DisplayDescriptor] {
         try await captureService.availableDisplays()
+    }
+
+    private func sendDisplayList() async {
+        do {
+            let displays = try await captureService.availableDisplays()
+            let payload = DisplayListPayload(
+                displays: displays.map {
+                    DisplayDescriptorPayload(
+                        displayID: $0.id,
+                        name: $0.name,
+                        width: $0.width,
+                        height: $0.height,
+                        isMain: $0.isMain,
+                        isBuiltIn: $0.isBuiltIn
+                    )
+                }
+            )
+            let data = try JSONEncoder().encode(payload)
+            try await transport.send(OutboundMessage(messageType: .displayList, payload: data))
+        } catch {
+            AppLogger.error(.node, "Failed to send display list: \(error.localizedDescription)")
+        }
+    }
+
+    private func sendWindowList() async {
+        do {
+            let windows = try await captureService.availableWindows()
+            let payload = WindowListPayload(
+                windows: windows.map {
+                    WindowDescriptorPayload(
+                        windowID: $0.windowID,
+                        applicationName: $0.appBundleID,
+                        title: $0.title,
+                        x: Int($0.bounds.x),
+                        y: Int($0.bounds.y),
+                        width: Int($0.bounds.width),
+                        height: Int($0.bounds.height),
+                        isOnScreen: !$0.isMinimized
+                    )
+                }
+            )
+            let data = try JSONEncoder().encode(payload)
+            try await transport.send(OutboundMessage(messageType: .windowList, payload: data))
+        } catch {
+            AppLogger.error(.node, "Failed to send window list: \(error.localizedDescription)")
+        }
     }
 
     private func updateState(_ newState: NodeState) {

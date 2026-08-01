@@ -161,6 +161,10 @@ public enum MessageType: UInt16, Sendable, CaseIterable {
     case heartbeat = 0x0050
     case heartbeatAck = 0x0051
     case emergencyStop = 0x0060
+    case switchDisplay = 0x0070
+    case switchWindow = 0x0071
+    case displayList = 0x0072
+    case windowList = 0x0073
     case videoConfiguration = 0x0100
     case videoFrame = 0x0101
     case videoKeyframeRequest = 0x0102

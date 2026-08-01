@@ -238,7 +238,7 @@ let package = Package(
         ),
         .target(
             name: "VanguardWorkspace",
-            dependencies: ["VanguardDomain"],
+            dependencies: ["VanguardDomain", "VanguardProtocol"],
             path: "Packages/VanguardWorkspace/Sources/VanguardWorkspace"
         ),
         .testTarget(
