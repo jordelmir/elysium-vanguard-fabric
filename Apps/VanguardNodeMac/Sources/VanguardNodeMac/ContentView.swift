@@ -104,6 +104,7 @@ struct ContentView: View {
             let ac = await service.checkPermission(kind: .accessibility)
             withAnimation { screenRecordingGranted = sr.isGranted }
             withAnimation { accessibilityGranted = ac.isGranted }
+            await state.checkPermissions()
         }
     }
 
