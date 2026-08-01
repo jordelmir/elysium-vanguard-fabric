@@ -43,7 +43,7 @@ public actor STUNClient {
     ) async throws -> NATMapping {
         let endpoint = NWEndpoint.hostPort(
             host: NWEndpoint.Host(stunHost),
-            port: NWEndpoint.Port(rawValue: stunPort)!
+            port: NWEndpoint.Port(rawValue: stunPort) ?? .any
         )
         let params = NWParameters()
         params.defaultProtocolStack.transportProtocol = NWProtocolUDP.Options()
