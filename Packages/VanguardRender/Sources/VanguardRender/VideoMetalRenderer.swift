@@ -12,6 +12,7 @@ public enum RendererError: Error, Sendable {
     case pipelineStateCreationFailed(String)
     case pixelBufferCreationFailed(Int32)
     case textureCreationFailed(Int32)
+    case bufferAllocationFailed
 }
 
 public protocol MetalRenderer: Sendable {
@@ -98,7 +99,7 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
         commandQueue: MTLCommandQueue,
         pipelineState: MTLRenderPipelineState,
         textureCache: CVMetalTextureCache
-    ) {
+    ) throws {
         self.device = device
         self.commandQueue = commandQueue
         self.pipelineState = pipelineState
@@ -106,9 +107,14 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
         super.init()
 
         for _ in 0..<kMaxInflightBuffers {
-            vertexBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
-            texCoordBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared)!)
-            uniformBuffers.append(device.makeBuffer(length: MemoryLayout<Float>.size * 4, options: .storageModeShared)!)
+            guard let vb = device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared),
+                  let tb = device.makeBuffer(length: MemoryLayout<Float>.size * 8, options: .storageModeShared),
+                  let ub = device.makeBuffer(length: MemoryLayout<Float>.size * 4, options: .storageModeShared) else {
+                throw RendererError.bufferAllocationFailed
+            }
+            vertexBuffers.append(vb)
+            texCoordBuffers.append(tb)
+            uniformBuffers.append(ub)
         }
     }
 
@@ -149,7 +155,7 @@ public final class VideoMetalRenderer: NSObject, MetalRenderer, MTKViewDelegate,
             throw RendererError.pipelineStateCreationFailed("\(error)")
         }
 
-        return VideoMetalRenderer(
+        return try VideoMetalRenderer(
             device: device,
             commandQueue: queue,
             pipelineState: pipelineState,
