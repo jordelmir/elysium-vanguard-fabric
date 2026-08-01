@@ -1,10 +1,13 @@
 import SwiftUI
 import VanguardUI
+import VanguardPermissions
 
 struct ContentView: View {
     @EnvironmentObject private var state: NodeAppState
     @State private var showPairingSheet = false
     @State private var animateGlow = false
+    @State private var screenRecordingGranted = false
+    @State private var accessibilityGranted = false
 
     var body: some View {
         CosmicBackground(baseColor: DS.Colors.accent, particleCount: 40)
@@ -21,8 +24,8 @@ struct ContentView: View {
                         .padding(.horizontal, DS.Spacing.xxl)
                         .padding(.top, DS.Spacing.lg)
 
-                    if state.permissions == .denied {
-                        permissionsWarning
+                    if state.permissions != .authorized {
+                        permissionsOnboarding
                             .padding(.horizontal, DS.Spacing.xxl)
                             .padding(.top, DS.Spacing.md)
                     }
@@ -37,7 +40,7 @@ struct ContentView: View {
                         .padding(.horizontal, DS.Spacing.xxl)
                         .padding(.bottom, DS.Spacing.xxl)
                 }
-                .frame(width: 420, height: 480)
+                .frame(width: 420, height: 520)
             )
             .environment(\.themeProfile, state.currentTheme)
             .sheet(isPresented: $showPairingSheet) {
@@ -56,7 +59,21 @@ struct ContentView: View {
                 withAnimation(.easeInOut(duration: 2).repeatForever()) {
                     animateGlow = true
                 }
+                refreshPermissionStates()
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                refreshPermissionStates()
+            }
+    }
+
+    private func refreshPermissionStates() {
+        let service = MacOSPermissionService()
+        Task {
+            let sr = await service.checkPermission(kind: .screenRecording)
+            let ac = await service.checkPermission(kind: .accessibility)
+            withAnimation { screenRecordingGranted = sr.isGranted }
+            withAnimation { accessibilityGranted = ac.isGranted }
+        }
     }
 
     private var header: some View {
@@ -123,24 +140,54 @@ struct ContentView: View {
         }
     }
 
-    private var permissionsWarning: some View {
-        HStack(spacing: DS.Spacing.md) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(DS.Colors.warning)
-            VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+    private var permissionsOnboarding: some View {
+        VStack(spacing: DS.Spacing.sm) {
+            HStack(spacing: DS.Spacing.sm) {
+                Image(systemName: "lock.shield.fill")
+                    .foregroundColor(DS.Colors.warning)
+                    .font(.system(size: 12))
                 Text("Permissions Required")
                     .font(DS.Typography.footnote)
                     .foregroundColor(DS.Colors.warning)
-                Text("Grant Screen Recording & Accessibility")
-                    .font(DS.Typography.caption)
-                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
             }
-            Spacer()
-            ElysiumButton(title: "Open", icon: "gear", color: DS.Colors.warning, style: .bordered) {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
-                    NSWorkspace.shared.open(url)
+
+            PermissionRow(
+                icon: "display",
+                name: "Screen Recording",
+                granted: screenRecordingGranted,
+                onGrant: {
+                    let service = MacOSPermissionService()
+                    Task {
+                        _ = await service.requestPermission(kind: .screenRecording)
+                        await service.openSystemSettings(for: .screenRecording)
+                    }
                 }
+            )
+
+            PermissionRow(
+                icon: "hand.tap",
+                name: "Accessibility",
+                granted: accessibilityGranted,
+                onGrant: {
+                    let service = MacOSPermissionService()
+                    Task {
+                        _ = await service.requestPermission(kind: .accessibility)
+                        await service.openSystemSettings(for: .accessibility)
+                    }
+                }
+            )
+
+            HStack(spacing: DS.Spacing.xs) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.Colors.textQuaternary)
+                Text("Come back here after enabling — auto-detects")
+                    .font(DS.Typography.caption)
+                    .foregroundColor(DS.Colors.textQuaternary)
+                Spacer()
             }
+            .padding(.top, DS.Spacing.xxs)
         }
         .padding(DS.Spacing.lg)
         .glass(style: .thin, cornerRadius: DS.Radius.lg)
@@ -223,6 +270,45 @@ struct TelemetryItem: View {
                 .foregroundColor(color)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+struct PermissionRow: View {
+    let icon: String
+    let name: String
+    let granted: Bool
+    let onGrant: () -> Void
+
+    var body: some View {
+        HStack(spacing: DS.Spacing.md) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundColor(granted ? DS.Colors.success : DS.Colors.textTertiary)
+                .frame(width: 20)
+
+            Text(name)
+                .font(DS.Typography.footnote)
+                .foregroundColor(DS.Colors.textPrimary)
+
+            Spacer()
+
+            if granted {
+                HStack(spacing: DS.Spacing.xxs) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10))
+                    Text("Granted")
+                        .font(DS.Typography.caption)
+                }
+                .foregroundColor(DS.Colors.success)
+            } else {
+                ElysiumButton(title: "Grant", icon: "arrow.right", color: DS.Colors.warning, style: .bordered) {
+                    onGrant()
+                }
+            }
+        }
+        .padding(.horizontal, DS.Spacing.md)
+        .padding(.vertical, DS.Spacing.sm)
+        .glass(style: .ultraThin, cornerRadius: DS.Radius.md)
     }
 }
 

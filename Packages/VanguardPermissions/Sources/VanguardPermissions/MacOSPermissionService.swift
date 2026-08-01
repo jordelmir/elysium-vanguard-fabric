@@ -48,7 +48,7 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
             return CGRequestScreenCaptureAccess() ? .granted : .denied
 
         case .accessibility:
-            return AXIsProcessTrusted() ? .granted : .denied
+            return Self.requestAccessibilityTrust()
 
         case .localNetwork:
             return .granted
@@ -64,6 +64,12 @@ public final class MacOSPermissionService: PermissionService, @unchecked Sendabl
             }
             return .unsupported
         }
+    }
+
+    private static func requestAccessibilityTrust() -> PermissionState {
+        let key = unsafeBitCast(NSString("AXTrustedCheckOptionPrompt"), to: CFString.self)
+        let options = [key: true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options) ? .granted : .denied
     }
 
     public func openSystemSettings(for kind: PermissionKind) async {

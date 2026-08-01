@@ -34,5 +34,7 @@
     <string>Elysium Node needs accessibility access to control mouse and keyboard remotely.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Elysium Node needs local network access to discover and connect to consoles on your LAN.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Elysium Node needs microphone access to capture system audio during screen sharing.</string>
 </dict>
 </plist>

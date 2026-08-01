@@ -122,7 +122,13 @@ public final class CGEventInputDispatchService: InputDispatchService, @unchecked
     }
 
     public func requestAccessibility() async -> Bool {
-        AXIsProcessTrusted()
+        Self.requestAccessibilityTrust()
+    }
+
+    private static func requestAccessibilityTrust() -> Bool {
+        let key = unsafeBitCast(NSString("AXTrustedCheckOptionPrompt"), to: CFString.self)
+        let options = [key: true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
     }
 
     // MARK: - Mouse Movement
