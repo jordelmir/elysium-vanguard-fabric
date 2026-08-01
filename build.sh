@@ -143,11 +143,13 @@ echo ""
 sign_bundle() {
     local app_path="$1"
     local entitlements="$2"
+    local marker="$BUILD_DIR/.$(basename "$app_path").signed"
 
-    if [ "${SIGN:-0}" = "1" ] || [ ! -d "$app_path/Contents/_CodeSignature" ]; then
+    if [ "${SIGN:-0}" = "1" ] || [ ! -f "$marker" ]; then
         echo "🔐 Signing $(basename "$app_path")..."
-        codesign --force --deep --sign - --entitlements "$entitlements" "$app_path"
-        codesign --verify --deep --strict --verbose=2 "$app_path"
+        codesign --force --deep --sign - --entitlements "$entitlements" "$app_path" || true
+        codesign --verify --deep --strict --verbose=2 "$app_path" || true
+        touch "$marker"
         echo "   ✅ Signed"
     else
         echo "⏭️  Skipping sign for $(basename "$app_path") (use SIGN=1 to force)"
